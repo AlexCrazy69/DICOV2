@@ -7,17 +7,21 @@ import { GoogleGenAI, Chat } from "@google/genai";
 const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
 // --- TYPE DEFINITIONS ---
-type DictionaryEntry = {
-  faka_uvea: string;
+type Meaning = {
   french: string;
   type: string;
-  phonetic?: string;
-  audio_url?: string;
-  image_url?: string;
   examples: {
     faka_uvea: string;
     french: string;
   }[];
+};
+
+type DictionaryEntry = {
+  faka_uvea: string;
+  phonetic?: string;
+  audio_url?: string;
+  image_url?: string;
+  meanings: Meaning[];
 };
 
 type GuideCategory = {
@@ -28,7 +32,7 @@ type GuideCategory = {
     }[];
 };
 
-type ThemePreference = 'light' | 'dark' | 'system';
+type ThemePreference = 'light' | 'dark' | 'system' | 'papyrus';
 
 type ExamLevel = {
     name: 'Bronze' | 'Argent' | 'Or';
@@ -39,7 +43,9 @@ type ExamLevel = {
 };
 
 type User = {
+    id: string;
     username: string;
+    password?: string;
     role: 'user' | 'admin';
 };
 
@@ -51,20 +57,60 @@ type AppContextType = {
   toggleFavorite: (faka_uvea: string) => void;
   history: string[];
   logHistory: (faka_uvea: string) => void;
-  setCurrentPage: (page: string) => void;
+  setHistory: React.Dispatch<React.SetStateAction<string[]>>;
+  dictionary: DictionaryEntry[];
+  setDictionary: React.Dispatch<React.SetStateAction<DictionaryEntry[]>>;
+  resetDictionary: () => void;
 };
 
 type AuthContextType = {
     user: User | null;
+    users: User[];
     login: (username, password) => boolean;
     logout: () => void;
+    setUsers: React.Dispatch<React.SetStateAction<User[]>>;
+    addUser: (user: User) => void;
+    updateUser: (user: User) => void;
+    deleteUser: (userId: string) => void;
+    resetUsers: () => void;
 };
+
+type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
+type ToastContextType = { addToast: (message: string, type?: Toast['type']) => void; };
+
+
+// --- HELPER HOOKS ---
+function useStorageState<T>(key: string, defaultValue: T, storage: Storage): [T, React.Dispatch<React.SetStateAction<T>>] {
+    const [state, setState] = useState<T>(() => {
+        try {
+            const storedValue = storage.getItem(key);
+            return storedValue ? JSON.parse(storedValue) : defaultValue;
+        } catch (error) {
+            console.error("Error reading from storage", error);
+            return defaultValue;
+        }
+    });
+
+    useEffect(() => {
+        try {
+            storage.setItem(key, JSON.stringify(state));
+        } catch (error) {
+            console.error("Error writing to storage", error);
+        }
+    }, [key, state, storage]);
+
+    return [state, setState];
+}
+
+const useLocalStorage = <T,>(key: string, defaultValue: T) => useStorageState<T>(key, defaultValue, localStorage);
+const useSessionStorage = <T,>(key: string, defaultValue: T) => useStorageState<T>(key, defaultValue, sessionStorage);
+
 
 // --- HELPER: Levenshtein Distance ---
 const levenshteinDistance = (s1: string, s2: string): number => {
     s1 = s1.toLowerCase();
     s2 = s2.toLowerCase();
-    const costs = [];
+    const costs: number[] = [];
     for (let i = 0; i <= s1.length; i++) {
         let lastValue = i;
         for (let j = 0; j <= s2.length; j++) {
@@ -89,155 +135,213 @@ const levenshteinDistance = (s1: string, s2: string): number => {
 
 // --- DATA ---
 const DICTIONARY_DATA: DictionaryEntry[] = [
-  {
+    {
     faka_uvea: 'alofa',
-    french: 'amour, bonjour, pitié',
-    type: 'n.c.',
     phonetic: '/a.lo.fa/',
     audio_url: 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=',
     image_url: 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'400\' height=\'200\' viewBox=\'0 0 400 200\'%3E%3Crect width=\'400\' height=\'200\' fill=\'%23e0e0e0\' /%3E%3Ctext x=\'50%25\' y=\'50%25\' dominant-baseline=\'middle\' text-anchor=\'middle\' font-family=\'monospace\' font-size=\'26px\' fill=\'%23999999\'%3EImage 400x200%3C/text%3E%3C/svg%3E',
-    examples: [{ faka_uvea: 'Mālō te ma\'uli, \'alofa atu.', french: 'Bonjour, je vous salue.' }],
+    meanings: [{
+        french: 'amour, bonjour, pitié',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'Mālō te ma\'uli, \'alofa atu.', french: 'Bonjour, je vous salue.' }]
+    }]
   },
   {
     faka_uvea: 'api',
-    french: 'maison, habitation',
-    type: 'n.c.',
     phonetic: '/a.pi/',
     image_url: 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'400\' height=\'200\' viewBox=\'0 0 400 200\'%3E%3Crect width=\'400\' height=\'200\' fill=\'%23e0e0e0\' /%3E%3Ctext x=\'50%25\' y=\'50%25\' dominant-baseline=\'middle\' text-anchor=\'middle\' font-family=\'monospace\' font-size=\'26px\' fill=\'%23999999\'%3EImage 400x200%3C/text%3E%3C/svg%3E',
-    examples: [{ faka_uvea: 'E au nofo i toku api.', french: 'Je reste dans ma maison.' }],
+    meanings: [{
+        french: 'maison, habitation',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'E au nofo i toku api.', french: 'Je reste dans ma maison.' }]
+    }]
+  },
+  {
+    faka_uvea: 'afo',
+    phonetic: '/a.fo/',
+    meanings: [
+        {
+            type: 's.',
+            french: 'Rang de feuilles pour la toiture',
+            examples: [{ faka_uvea: 'Kua popo te afo o toku falelaú.', french: 'Le rang de feuilles pour la toiture de ma maison est dégradé/pourri.' }]
+        },
+        {
+            type: 's.',
+            french: 'Grosse ficelle pour la pêche à la ligne (forme peu usitée-tend à disparaître)',
+            examples: []
+        }
+    ]
   },
   {
     faka_uvea: 'aho',
-    french: 'jour',
-    type: 'n.c.',
     phonetic: '/a.ho/',
-    examples: [{ faka_uvea: 'Ko te \'aho tenei \'e lelei.', french: 'Ce jour est bon.' }],
+    meanings: [{
+        french: 'jour',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'Ko te \'aho tenei \'e lelei.', french: 'Ce jour est bon.' }]
+    }]
   },
   {
     faka_uvea: 'aso',
-    french: 'soleil',
-    type: 'n.c.',
     phonetic: '/a.so/',
-    examples: [{ faka_uvea: 'E malamalama te aso.', french: 'Le soleil brille.' }],
+    meanings: [{
+        french: 'soleil',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'E malamalama te aso.', french: 'Le soleil brille.' }]
+    }]
   },
   {
     faka_uvea: 'atua',
-    french: 'dieu, esprit',
-    type: 'n.c.',
     phonetic: '/a.tu.a/',
-    examples: [{ faka_uvea: 'E tui ki te \'atua.', french: 'Croyance en dieu.' }],
+    meanings: [{
+        french: 'dieu, esprit',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'E tui ki te \'atua.', french: 'Croyance en dieu.' }]
+    }]
   },
   {
     faka_uvea: 'ava',
-    french: 'passe (récif)',
-    type: 'n.c.',
     phonetic: '/a.va/',
-    examples: [{ faka_uvea: 'E ulu te vaka i te ava.', french: 'Le bateau entre par la passe.' }],
+    meanings: [{
+        french: 'passe (récif)',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'E ulu te vaka i te ava.', french: 'Le bateau entre par la passe.' }]
+    }]
   },
   {
     faka_uvea: 'aliki',
-    french: 'roi, chef',
-    type: 'n.c.',
     phonetic: '/a.li.ki/',
-    examples: [{ faka_uvea: 'Ko te aliki o Uvea.', french: 'Le roi de Wallis.' }],
+    meanings: [{
+        french: 'roi, chef',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'Ko te aliki o Uvea.', french: 'Le roi de Wallis.' }]
+    }]
   },
   {
     faka_uvea: 'au',
-    french: 'je, moi',
-    type: 'pr.p.',
     phonetic: '/a.u/',
-    examples: [{ faka_uvea: 'E alu au ki te api.', french: 'Je vais à la maison.' }],
+    meanings: [{
+        french: 'je, moi',
+        type: 'pr.p.',
+        examples: [{ faka_uvea: 'E alu au ki te api.', french: 'Je vais à la maison.' }]
+    }]
   },
   {
     faka_uvea: '\'amuli',
-    french: 'Avenir, plus tard, dans la suite',
-    type: 'adv.',
     phonetic: '/ʔa.mu.li/',
-    examples: [{ faka_uvea: 'Gāue mo manatu ki ’amuli.', french: 'Travaille en pensant à l’avenir.' }],
+    meanings: [{
+        french: 'Avenir, plus tard, dans la suite',
+        type: 'adv.',
+        examples: [{ faka_uvea: 'Gāue mo manatu ki ’amuli.', french: 'Travaille en pensant à l’avenir.' }]
+    }]
   },
   {
     faka_uvea: 'afi',
-    french: 'feu',
-    type: 'n.c.',
     phonetic: '/a.fi/',
-    examples: [{ faka_uvea: 'Kua kā te afi.', french: 'Le feu est allumé.' }],
+    meanings: [{
+        french: 'feu',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'Kua kā te afi.', french: 'Le feu est allumé.' }]
+    }]
   },
   {
     faka_uvea: 'ano',
-    french: 'lac',
-    type: 'n.c.',
     phonetic: '/a.no/',
-    examples: [{ faka_uvea: 'E lahi te ano o Lalolalo.', french: 'Le lac Lalolalo est grand.' }],
+    meanings: [{
+        french: 'lac',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'E lahi te ano o Lalolalo.', french: 'Le lac Lalolalo est grand.' }]
+    }]
   },
   {
     faka_uvea: 'aku',
-    french: 'mon, ma, mes (possessif)',
-    type: 'adj.poss.',
     phonetic: '/a.ku/',
-    examples: [{ faka_uvea: 'Ko te tohi aku.', french: 'C\'est mon livre.' }],
+    meanings: [{
+        french: 'mon, ma, mes (possessif)',
+        type: 'adj.poss.',
+        examples: [{ faka_uvea: 'Ko te tohi aku.', french: 'C\'est mon livre.' }]
+    }]
   },
   {
     faka_uvea: 'ama',
-    french: 'balancier de pirogue',
-    type: 'n.c.',
     phonetic: '/a.ma/',
-    examples: [{ faka_uvea: 'E pakia te ama o te vaka.', french: 'Le balancier de la pirogue est cassé.' }],
+    meanings: [{
+        french: 'balancier de pirogue',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'E pakia te ama o te vaka.', french: 'Le balancier de la pirogue est cassé.' }]
+    }]
   },
   {
     faka_uvea: '\'aka',
-    french: 'racine',
-    type: 'n.c.',
     phonetic: '/ʔa.ka/',
-    examples: [{ faka_uvea: 'E loloto te \'aka o te fu\'u lakau.', french: 'La racine de l\'arbre est profonde.' }],
+    meanings: [{
+        french: 'racine',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'E loloto te \'aka o te fu\'u lakau.', french: 'La racine de l\'arbre est profonde.' }]
+    }]
   },
   {
     faka_uvea: '\'ala',
-    french: 'chemin, voie',
-    type: 'n.c.',
     phonetic: '/ʔa.la/',
-    examples: [{ faka_uvea: 'Toupi te \'ala ki te gata\'aga.', french: 'Le chemin vers la plage est court.' }],
+    meanings: [{
+        french: 'chemin, voie',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'Toupi te \'ala ki te gata\'aga.', french: 'Le chemin vers la plage est court.' }]
+    }]
   },
   {
     faka_uvea: '\'aga',
-    french: 'coutume, manière d\'être',
-    type: 'n.c.',
     phonetic: '/ʔa.ŋa/',
-    examples: [{ faka_uvea: 'Ko te \'aga faka\'uvea.', french: 'C\'est la coutume wallisienne.' }],
+    meanings: [{
+        french: 'coutume, manière d\'être',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'Ko te \'aga faka\'uvea.', french: 'C\'est la coutume wallisienne.' }]
+    }]
   },
   {
     faka_uvea: '\'ahoa',
-    french: 'collier (de fleurs ou coquillages)',
-    type: 'n.c.',
     phonetic: '/ʔa.ho.a/',
-    examples: [{ faka_uvea: 'Ne\'i fai he \'ahoa sisi.', french: 'Elle a fabriqué un collier de coquillages.' }],
+    meanings: [{
+        french: 'collier (de fleurs ou coquillages)',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'Ne\'i fai he \'ahoa sisi.', french: 'Elle a fabriqué un collier de coquillages.' }]
+    }]
   },
   {
     faka_uvea: '\'aele',
-    french: 'se promener, marcher',
-    type: 'v.',
     phonetic: '/ʔa.e.le/',
-    examples: [{ faka_uvea: 'Tau olo o \'aele.', french: 'Allons nous promener.' }],
+    meanings: [{
+        french: 'se promener, marcher',
+        type: 'v.',
+        examples: [{ faka_uvea: 'Tau olo o \'aele.', french: 'Allons nous promener.' }]
+    }]
   },
   {
     faka_uvea: '\'ate',
-    french: 'foie',
-    type: 'n.c.',
     phonetic: '/ʔa.te/',
-    examples: [{ faka_uvea: 'Ko te \'ate moa \'e lelei.', french: 'Le foie de poulet est bon.' }],
+    meanings: [{
+        french: 'foie',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'Ko te \'ate moa \'e lelei.', french: 'Le foie de poulet est bon.' }]
+    }]
   },
   {
     faka_uvea: '\'ao',
-    french: 'nuage',
-    type: 'n.c.',
     phonetic: '/ʔa.o/',
-    examples: [{ faka_uvea: 'E lahi te \'ao i te lagi.', french: 'Il y a beaucoup de nuages dans le ciel.' }],
+    meanings: [{
+        french: 'nuage',
+        type: 'n.c.',
+        examples: [{ faka_uvea: 'E lahi te \'ao i te lagi.', french: 'Il y a beaucoup de nuages dans le ciel.' }]
+    }]
   },
   {
     faka_uvea: '\'avelo',
-    french: 'rapide, vitesse',
-    type: 'adj.',
     phonetic: '/ʔa.ve.lo/',
-    examples: [{ faka_uvea: 'E \'avelo lahi te ka.', french: 'La voiture est très rapide.' }],
+    meanings: [{
+        french: 'rapide, vitesse',
+        type: 'adj.',
+        examples: [{ faka_uvea: 'E \'avelo lahi te ka.', french: 'La voiture est très rapide.' }]
+    }]
   }
 ].sort((a, b) => a.faka_uvea.localeCompare(b.faka_uvea));
 
@@ -266,727 +370,1181 @@ const GUIDE_DATA: GuideCategory[] = [
     }
 ];
 
-const ALPHABET_STATUS = [
-    { letter: 'A', enabled: true }, { letter: 'E', enabled: false }, { letter: 'F', enabled: false }, 
-    { letter: 'G', enabled: false }, { letter: 'H', enabled: false }, { letter: 'I', enabled: false },
-    { letter: 'K', enabled: false }, { letter: 'L', enabled: false }, { letter: 'M', enabled: false }, 
-    { letter: 'N', enabled: false }, { letter: 'O', enabled: false }, { letter: 'S', enabled: false }, 
-    { letter: 'T', enabled: false }, { letter: 'U', enabled: false }, { letter: 'V', enabled: false }, 
-    { letter: '\'', enabled: false }
+const USERS_DATA: User[] = [
+    { id: '1', username: 'admin', role: 'admin', password: 'admin' },
+    { id: '2', username: 'user', role: 'user', password: 'user' },
 ];
 
+const ALPHABET = ['A', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'O', 'S', 'T', 'U', 'V', '\''];
+
 const EXAM_LEVELS: ExamLevel[] = [
-    { name: 'Bronze', color: '#cd7f32', questionCount: 5, passingPercent: 70, duration: 2 },
-    { name: 'Argent', color: '#667eea', questionCount: 10, passingPercent: 75, duration: 5 },
-    { name: 'Or', color: '#fbbf24', questionCount: 15, passingPercent: 80, duration: 8 }
+    { name: 'Bronze', color: '#cd7f32', questionCount: 10, passingPercent: 70, duration: 4 },
+    { name: 'Argent', color: '#667eea', questionCount: 20, passingPercent: 75, duration: 10 },
+    { name: 'Or', color: '#fbbf24', questionCount: 30, passingPercent: 80, duration: 15 }
 ];
 
 
 // --- ICONS ---
+const HomeIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M11.47 3.84a.75.75 0 0 1 1.06 0l8.69 8.69a.75.75 0 1 1-1.06 1.06l-1.72-1.72V19.5a.75.75 0 0 1-.75.75h-5.5a.75.75 0 0 1-.75-.75v-5.5a.75.75 0 0 0-.75-.75h-1.5a.75.75 0 0 0-.75.75v5.5a.75.75 0 0 1-.75.75h-5.5a.75.75 0 0 1-.75-.75V11.88l-1.72 1.72a.75.75 0 1 1-1.06-1.06l8.69-8.69Z" /></svg>;
+const CogIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path fillRule="evenodd" d="M12.965 2.54a1.875 1.875 0 0 1 1.768 1.483l.08.339c.214.862.935 1.458 1.832 1.558l.41.044a1.875 1.875 0 0 1 1.815 2.164l-.1.4a1.875 1.875 0 0 1-1.33 1.516l-.374.135a1.875 1.875 0 0 0-1.298 1.298l-.135.374a1.875 1.875 0 0 1-1.516 1.33l-.4.1a1.875 1.875 0 0 1-2.164-1.815l-.044-.41a1.875 1.875 0 0 0-1.558-1.832l-.339-.08a1.875 1.875 0 0 1-1.483-1.768l-.002-1.027a1.875 1.875 0 0 1 1.483-1.768l.339-.08c.897-.1 1.618-.696 1.832-1.558l.08-.339a1.875 1.875 0 0 1 1.768-1.483h.001ZM12 15.375a3.375 3.375 0 1 0 0-6.75 3.375 3.375 0 0 0 0 6.75Z" clipRule="evenodd" /></svg>;
+const UsersIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M10.375 2.25a4.125 4.125 0 1 0 0 8.25 4.125 4.125 0 0 0 0-8.25ZM10.375 8.625a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5Z" /><path d="M18.813 9.395a.75.75 0 0 1 .437.695v.001c0 .414-.336.75-.75.75h-1.5a.75.75 0 0 1 0-1.5h.345a2.622 2.622 0 0 0-1.63-2.344 4.131 4.131 0 0 0-2.392-1.066.75.75 0 0 1-.363-1.454 5.63 5.63 0 0 1 3.262 1.468 4.123 4.123 0 0 1 2.091 3.445Z" /><path d="M11.625 15.375a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5a.75.75 0 0 1 .75-.75Z" /><path fillRule="evenodd" d="M6.343 12.22a.75.75 0 0 1 .638.863 3.373 3.373 0 0 0 2.23 3.037.75.75 0 1 1-.44 1.424 4.873 4.873 0 0 1-3.212-4.382.75.75 0 0 1 .863-.638ZM14.407 12.22a.75.75 0 0 1 .863.638 4.873 4.873 0 0 1-3.212 4.382.75.75 0 1 1-.44-1.424 3.373 3.373 0 0 0 2.23-3.037.75.75 0 0 1 .638-.863Z" clipRule="evenodd" /></svg>;
 const SpeakerIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M14.604 3.012a.749.749 0 0 0-.965.033L8.62 7.25H5.375A2.375 2.375 0 0 0 3 9.625v4.75A2.375 2.375 0 0 0 5.375 16.75H8.62l5.019 4.205a.75.75 0 0 0 .965.033.752.752 0 0 0 .396-.688V3.7a.752.752 0 0 0-.396-.688Z" /><path d="M17.125 7.75a.75.75 0 0 0 0 1.5c.828 0 1.5.672 1.5 1.5s-.672 1.5-1.5 1.5a.75.75 0 0 0 0 1.5c1.657 0 3-1.343 3-3s-1.343-3-3-3Zm0 4.5a.75.75 0 0 0 0 1.5c2.485 0 4.5-2.015 4.5-4.5s-2.015-4.5-4.5-4.5a.75.75 0 0 0 0 1.5c1.657 0 3 1.343 3 3s-1.343 3-3 3Z" /></svg>);
 const PlayIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path fillRule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.647c1.295.742 1.295 2.545 0 3.286L7.279 20.99c-1.25.717-2.779-.217-2.779-1.643V5.653Z" clipRule="evenodd" /></svg>);
 const MenuIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>);
 const CloseIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>);
+const MoreIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path fillRule="evenodd" d="M4.5 12a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0Zm6 0a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0Zm6 0a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0Z" clipRule="evenodd" /></svg>;
 const RestartIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>);
-const TrophyIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M15.5 13H14v-2h1.5a2.5 2.5 0 0 0 2.5-2.5A2.5 2.5 0 0 0 15.5 6h-7A2.5 2.5 0 0 0 6 8.5A2.5 2.5 0 0 0 8.5 11H10v2H8.5A4.5 4.5 0 0 1 4 8.5A4.5 4.5 0 0 1 8.5 4h7A4.5 4.5 0 0 1 20 8.5a4.5 4.5 0 0 1-4.5 4.5Zm-5.85 2h4.7L12 17.85 9.65 15ZM12 21l-3-3H4v-2h5l3 3 3-3h5v2h-5l-3 3Z"/></svg>);
-const StarIcon = ({ filled }) => (<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d={filled ? "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" : "M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"}/></svg>);
-const HistoryIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>);
+const TrophyIcon = ({width=20, height=20}: {width?: number; height?: number}) => (<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width={width} height={height}><path d="M15.5 13H14v-2h1.5a2.5 2.5 0 0 0 2.5-2.5A2.5 2.5 0 0 0 15.5 6h-7A2.5 2.5 0 0 0 6 8.5A2.5 2.5 0 0 0 8.5 11H10v2H8.5A4.5 4.5 0 0 1 4 8.5A4.5 4.5 0 0 1 8.5 4h7A4.5 4.5 0 0 1 20 8.5a4.5 4.5 0 0 1-4.5 4.5Zm-5.85 2h4.7L12 17.85 9.65 15ZM12 21l-3-3H4v-2h5l3 3 3-3h5v2h-5l-3 3Z"/></svg>);
+const StarIcon = ({ filled, width=20, height=20 }: {filled: boolean, width?: number, height?: number}) => (<svg xmlns="http://www.w3.org/2000/svg" height={`${height}px`} viewBox="0 0 24 24" width={`${width}px`} fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d={filled ? "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" : "M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"}/></svg>);
+const HistoryIcon = ({width=20, height=20}: {width?: number; height?: number}) => (<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width={width} height={height} fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>);
 const SunIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 2.25a.75.75 0 0 1 .75.75v2.25a.75.75 0 0 1-1.5 0V3a.75.75 0 0 1 .75-.75ZM7.5 12a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0ZM18.894 6.106a.75.75 0 0 1 1.06-1.06l1.591 1.59a.75.75 0 1 1-1.06 1.06l-1.591-1.59ZM21.75 12a.75.75 0 0 1-.75.75h-2.25a.75.75 0 0 1 0-1.5h2.25a.75.75 0 0 1 .75.75ZM17.894 17.894a.75.75 0 0 1 1.06 1.06l-1.59 1.591a.75.75 0 1 1-1.06-1.06l1.59-1.591ZM12 18.75a.75.75 0 0 1 .75.75v2.25a.75.75 0 0 1-1.5 0v-2.25a.75.75 0 0 1 .75-.75ZM5.106 17.894a.75.75 0 0 1 1.06-1.06l1.591 1.59a.75.75 0 1 1-1.06 1.06l-1.591-1.59ZM4.5 12a.75.75 0 0 1-.75.75H1.5a.75.75 0 0 1 0-1.5h2.25a.75.75 0 0 1 .75.75ZM6.106 5.106a.75.75 0 0 1 1.06 1.06l-1.59 1.591a.75.75 0 1 1-1.06-1.06l1.59-1.591Z" /></svg>;
 const MoonIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path fillRule="evenodd" d="M9.528 1.718a.75.75 0 0 1 .162.819A8.97 8.97 0 0 0 9 6a9 9 0 0 0 9 9 8.97 8.97 0 0 0 3.463-.69.75.75 0 0 1 .981.981A10.503 10.503 0 0 1 18 18a10.5 10.5 0 0 1-10.5-10.5c0-1.81.46-3.516 1.255-5.042a.75.75 0 0 1 .819-.162Z" clipRule="evenodd" /></svg>;
 const SystemIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path fillRule="evenodd" d="M2.25 5.25a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3v10.5a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3V5.25ZM5.25 4.5a.75.75 0 0 0-.75.75v10.5a.75.75 0 0 0 .75.75h13.5a.75.75 0 0 0 .75-.75V5.25a.75.75 0 0 0-.75-.75H5.25Z" clipRule="evenodd" /></svg>;
-const BookOpenIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M10.5 3.75a2.25 2.25 0 0 0-2.25 2.25v10.5a2.25 2.25 0 0 0 2.25 2.25h3a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25h-3ZM9 6a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75-.75h-4.5a.75.75 0 0 1-.75-.75V6Z" clipRule="evenodd" /><path d="M6.75 5.25a2.25 2.25 0 0 0-2.25 2.25v10.5a2.25 2.25 0 0 0 2.25 2.25H9v-1.5H6.75A.75.75 0 0 1 6 16.5V7.5a.75.75 0 0 1 .75-.75h2.25V5.25H6.75Z" /><path d="M17.25 5.25a2.25 2.25 0 0 1 2.25 2.25v10.5a2.25 2.25 0 0 1-2.25 2.25H15v-1.5h2.25a.75.75 0 0 0 .75-.75V7.5a.75.75 0 0 0-.75-.75h-2.25V5.25h2.25Z" /></svg>;
-const PuzzlePieceIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M12.963 2.286a.75.75 0 0 0-1.071 1.052A3.75 3.75 0 0 1 15.75 6H18a.75.75 0 0 0 0-1.5h-2.25a2.25 2.25 0 0 0-1.787-2.214ZM10.5 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clipRule="evenodd" /><path d="M12 1.5A10.5 10.5 0 1 0 22.5 12 10.5 10.5 0 0 0 12 1.5ZM3.75 12a8.25 8.25 0 1 1 14.228 5.472.75.75 0 0 0-.584.876 9.752 9.752 0 0 1-1.65 3.423.75.75 0 0 0 1.115.986 11.252 11.252 0 0 0 1.905-3.92.75.75 0 0 0-.9-1.018 8.25 8.25 0 0 1-5.182 1.036.75.75 0 0 0-.74-1.233A8.25 8.25 0 0 1 3.75 12Z" /></svg>;
-const LanguageIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M8.25 6.75a3.75 3.75 0 0 0-3.75 3.75v.518c.928.09 1.815.24 2.65.443V10.5a1.125 1.125 0 0 1 1.125-1.125h1.5v6.75h-1.5a1.125 1.125 0 0 1-1.125-1.125v-.345a3.74 3.74 0 0 0-2.65.443v.518a3.75 3.75 0 0 0 3.75 3.75h1.5a.75.75 0 0 0 .75-.75v-9a.75.75 0 0 0-.75-.75h-1.5Z" clipRule="evenodd" /><path d="M12.75 2.25a.75.75 0 0 0-1.5 0v.512a14.28 14.28 0 0 0 1.5 0V2.25Z" /><path fillRule="evenodd" d="M12.75 5.493A12.75 12.75 0 0 0 12 5.25c-3.13 0-6.064 1.138-8.467 3.003a.75.75 0 1 0 .934 1.164A11.25 11.25 0 0 1 12 6.75c3.513 0 6.756 1.62 8.878 4.148a.75.75 0 1 0 1.244-.828A12.75 12.75 0 0 0 12.75 5.493Z" clipRule="evenodd" /><path d="M12.75 20.25a.75.75 0 0 0 1.5 0v-.512a14.28 14.28 0 0 0-1.5 0v.512Z" /><path fillRule="evenodd" d="M12.75 18.507A12.75 12.75 0 0 1 12 18.75c-3.13 0-6.064-1.138-8.467-3.003a.75.75 0 1 1 .934-1.164A11.25 11.25 0 0 0 12 17.25c3.513 0 6.756-1.62 8.878-4.148a.75.75 0 1 1 1.244.828A12.75 12.75 0 0 1 12.75 18.507Z" clipRule="evenodd" /></svg>;
-const ChatBubbleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M4.848 2.771A49.144 49.144 0 0 1 12 2.25c2.43 0 4.817.178 7.152.52 1.978.292 3.348 2.024 3.348 3.97v6.02c0 1.946-1.37 3.678-3.348 3.97a48.901 48.901 0 0 1-3.476.383.75.75 0 0 0-.646.434l-1.457 2.108a2.625 2.625 0 0 1-4.45 0l-1.457-2.108a.75.75 0 0 0-.646-.434 48.9 48.9 0 0 1-3.476-.384c-1.978-.29-3.348-2.024-3.348-3.97V6.74c0-1.946 1.37-3.68 3.348-3.97Z" clipRule="evenodd" /></svg>;
-const SparklesIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="40px" height="40px"><path fillRule="evenodd" d="M9 4.5a.75.75 0 0 1 .75.75v3.546a.75.75 0 0 1-1.5 0V5.25A.75.75 0 0 1 9 4.5Zm6.375 3.75a.75.75 0 0 0-1.5 0v3.546a.75.75 0 0 0 1.5 0V8.25Zm-10.5 3.75A.75.75 0 0 1 5.625 12v3.546a.75.75 0 0 1-1.5 0V12a.75.75 0 0 1 .75-.75Zm16.5 0a.75.75 0 0 0-1.5 0v3.546a.75.75 0 0 0 1.5 0V12Zm-1.875-5.25a.75.75 0 0 0-1.5 0v3.546a.75.75 0 0 0 1.5 0V6.75ZM7.125 9a.75.75 0 0 1 .75.75v3.546a.75.75 0 0 1-1.5 0V9.75a.75.75 0 0 1 .75-.75Zm8.25 1.5a.75.75 0 0 0-1.5 0v3.546a.75.75 0 0 0 1.5 0v-3.546Zm-4.5 3.75a.75.75 0 0 1 .75.75v3.546a.75.75 0 0 1-1.5 0v-3.546a.75.75 0 0 1 .75-.75Z" clipRule="evenodd" /><path d="M12 2.25a.75.75 0 0 1 .75.75v1.285a.75.75 0 0 1-1.5 0V3a.75.75 0 0 1 .75-.75Zm-4.5 3a.75.75 0 0 0-1.5 0v1.285a.75.75 0 0 0 1.5 0V5.25Zm9 0a.75.75 0 0 0-1.5 0v1.285a.75.75 0 0 0 1.5 0V5.25Zm-9 9.75a.75.75 0 0 1 .75.75v1.285a.75.75 0 0 1-1.5 0v-1.285a.75.75 0 0 1 .75-.75Zm4.5 3a.75.75 0 0 0-1.5 0v1.285a.75.75 0 0 0 1.5 0V18Zm4.5-3a.75.75 0 0 1 .75.75v1.285a.75.75 0 0 1-1.5 0v-1.285a.75.75 0 0 1 .75-.75Z" /></svg>;
-const SendIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" /></svg>;
-const UserIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M18.685 19.097A9.723 9.723 0 0 0 21.75 12c0-5.385-4.365-9.75-9.75-9.75S2.25 6.615 2.25 12a9.723 9.723 0 0 0 3.065 7.097A9.716 9.716 0 0 0 12 21.75a9.716 9.716 0 0 0 6.685-2.653Zm-12.54-1.285A7.486 7.486 0 0 1 12 15a7.486 7.486 0 0 1 5.855 2.812A8.224 8.224 0 0 1 12 20.25a8.224 8.224 0 0 1-5.855-2.438ZM15.75 9a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" clipRule="evenodd" /></svg>;
-const RobotIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M11.25 4.533A9.718 9.718 0 0 0 9.75 4.5c-2.99 0-5.632 1.306-7.518 3.332A.75.75 0 0 0 3 8.627v8.94c-1.011-.123-1.85-.964-1.977-1.983a.75.75 0 0 0-1.493.155 3.5 3.5 0 0 0 3.47 3.494.75.75 0 0 0 .75-.75v-1.727a9.702 9.702 0 0 0 6-2.122c.14-.105.277-.213.41-.325a.75.75 0 0 0 0-1.246 12.012 12.012 0 0 1-1.64-1.285 3 3 0 0 1-3.238-4.372c.414-.303.882-.544 1.396-.713A9.682 9.682 0 0 0 11.25 4.533Z" /><path d="M14.25 4.5a9.718 9.718 0 0 1 1.5.033c.316.035.628.082.934.141A3 3 0 0 1 19.5 7.5v.726a4.5 4.5 0 0 1 4.5 4.5v.001a4.5 4.5 0 0 1-4.5 4.5v.726a3 3 0 0 1-2.816 2.992 9.72 9.72 0 0 1-1.434.182 9.718 9.718 0 0 1-1.5.033A9.682 9.682 0 0 0 12 19.34a3 3 0 0 1-3.238-4.372c.414-.303.882-.544 1.396-.713A9.682 9.682 0 0 0 14.25 4.5Zm3 5.25a.75.75 0 0 0-1.5 0v3a.75.75 0 0 0 1.5 0v-3Z" /></svg>;
-const ShuffleIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>);
+const ScrollIcon = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M21 21.22V3.73c0-.8-.5-1.45-1.25-1.64C18.6 1.81 17.35 2 16.5 2c-1.5 0-2.38.62-3.5 1.25S11.25 4.5 9.75 4.5s-2.38-.62-3.5-1.25S4.5 2 3 2c-.85 0-2.1.19-3.25.49A1.75 1.75 0 0 0 1 4.14v16.14c0 .8.5 1.45 1.25 1.64C3.4 22.19 4.65 22 5.5 22c1.5 0 2.38-.62 3.5-1.25s1.75-1.25 3.25-1.25 2.38.62 3.5 1.25 1.75 1.25 3.25 1.25c.85 0 2.1-.19 3.25-.49a1.75 1.75 0 0 0-1.25-2.39ZM19.5 19.5c-1.12-.23-2.22-.64-3.25-1.25-1.03-.61-1.75-1.25-3.25-1.25s-2.22.64-3.25 1.25S8.5 19.5 7.25 19.5v-15c1.12.23 2.22.64 3.25 1.25C11.53 6.36 12.25 7 13.75 7s2.22-.64 3.25-1.25S18.5 4.5 19.75 4.5v15Z" /></svg>;
+const BookOpenIcon = ({width=20, height=20}: {width?: number; height?: number}) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width={width} height={height}><path fillRule="evenodd" d="M10.5 3.75a2.25 2.25 0 0 0-2.25 2.25v10.5a2.25 2.25 0 0 0 2.25 2.25h3a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25h-3ZM9 6a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75-.75h-4.5a.75.75 0 0 1-.75-.75V6Z" clipRule="evenodd" /><path d="M6.75 5.25a2.25 2.25 0 0 0-2.25 2.25v10.5a2.25 2.25 0 0 0 2.25 2.25H9v-1.5H6.75A.75.75 0 0 1 6 16.5V7.5a.75.75 0 0 1 .75-.75h2.25V5.25H6.75Z" /><path d="M17.25 5.25a2.25 2.25 0 0 1 2.25 2.25v10.5a2.25 2.25 0 0 1-2.25 2.25H15v-1.5h2.25a.75.75 0 0 0 .75-.75V7.5a.75.75 0 0 0-.75-.75h-2.25V5.25h2.25Z" /></svg>;
+const PuzzlePieceIcon = ({width=20, height=20}: {width?: number; height?: number}) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width={width} height={height}><path fillRule="evenodd" d="M12.963 2.286a.75.75 0 0 0-1.071 1.052A3.75 3.75 0 0 1 15.75 6H18a.75.75 0 0 0 0-1.5h-2.25a2.25 2.25 0 0 0-1.787-2.214ZM10.5 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clipRule="evenodd" /><path d="M12 1.5A10.5 10.5 0 1 0 22.5 12 10.5 10.5 0 0 0 12 1.5ZM3.75 12a8.25 8.25 0 1 1 14.228 5.472.75.75 0 0 0-.584.876 9.752 9.752 0 0 1-1.65 3.423.75.75 0 0 0 1.115.986 11.252 11.252 0 0 0 1.905-3.92.75.75 0 0 0-.9-1.018 8.25 8.25 0 0 1-5.182 1.036.75.75 0 0 0-.74-1.233A8.25 8.25 0 0 1 3.75 12Z" /></svg>;
+const LanguageIcon = ({width=20, height=20}: {width?: number; height?: number}) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width={width} height={height}><path fillRule="evenodd" d="M8.25 6.75a3.75 3.75 0 0 0-3.75 3.75v.518c.928.09 1.815.24 2.65.443V10.5a1.125 1.125 0 0 1 1.125-1.125h1.5v6.75h-1.5a1.125 1.125 0 0 1-1.125-1.125v-.345a3.74 3.74 0 0 0-2.65.443v.518a3.75 3.75 0 0 0 3.75 3.75h1.5a.75.75 0 0 0 .75-.75v-9a.75.75 0 0 0-.75-.75h-1.5Z" clipRule="evenodd" /><path d="M12.75 2.25a.75.75 0 0 0-1.5 0v.512a14.28 14.28 0 0 0 1.5 0V2.25Z" /><path fillRule="evenodd" d="M12.75 5.493A12.75 12.75 0 0 0 12 5.25c-3.13 0-6.064 1.138-8.467 3.003a.75.75 0 1 0 .934 1.164A11.25 11.25 0 0 1 12 6.75c3.513 0 6.756 1.62 8.878 4.148a.75.75 0 1 0 1.244-.828A12.75 12.75 0 0 0 12.75 5.493Z" clipRule="evenodd" /><path d="M12.75 20.25a.75.75 0 0 0 1.5 0v-.512a14.28 14.28 0 0 0-1.5 0v.512Z" /><path fillRule="evenodd" d="M12.75 18.507A12.75 12.75 0 0 1 12 18.75c-3.13 0-6.064-1.138-8.467-3.003a.75.75 0 1 1 .934-1.164A11.25 11.25 0 0 0 12 17.25c3.513 0 6.756-1.62 8.878-4.148a.75.75 0 1 1 1.244.828A12.75 12.75 0 0 1 12.75 18.507Z" clipRule="evenodd" /></svg>;
+const ChatBubbleIcon = ({width=20, height=20}: {width?: number; height?: number}) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width={width} height={height}><path fillRule="evenodd" d="M4.848 2.771A49.144 49.144 0 0 1 12 2.25c2.43 0 4.817.178 7.152.52 1.978.292 3.348 2.024 3.348 3.97v6.02c0 1.946-1.37 3.678-3.348 3.97a48.901 48.901 0 0 1-3.476.383.75.75 0 0 0-.646.434l-1.457 2.108a2.625 2.625 0 0 1-4.45 0l-1.457-2.108a.75.75 0 0 0-.646-.434 48.9 48.9 0 0 1-3.476-.384c-1.978-.29-3.348-2.024-3.348-3.97V6.74c0-1.946 1.37-3.68 3.348-3.97Z" clipRule="evenodd" /></svg>;
+const SparklesIcon = ({width=20, height=20}: {width?: number; height?: number}) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width={width} height={height}><path fillRule="evenodd" d="M9 4.5a.75.75 0 0 1 .75.75v3.546a.75.75 0 0 1-1.5 0V5.25A.75.75 0 0 1 9 4.5Zm6.375 3.75a.75.75 0 0 0-1.5 0v3.546a.75.75 0 0 0 1.5 0V8.25Zm-10.5 3.75A.75.75 0 0 1 5.625 12v3.546a.75.75 0 0 1-1.5 0V12a.75.75 0 0 1 .75-.75Zm16.5 0a.75.75 0 0 0-1.5 0v3.546a.75.75 0 0 0 1.5 0V12Zm-1.875-5.25a.75.75 0 0 0-1.5 0v3.546a.75.75 0 0 0 1.5 0V6.75ZM7.125 9a.75.75 0 0 1 .75.75v3.546a.75.75 0 0 1-1.5 0V9.75a.75.75 0 0 1 .75-.75Zm8.25 1.5a.75.75 0 0 0-1.5 0v3.546a.75.75 0 0 0 1.5 0v-3.546Zm-4.5 3.75a.75.75 0 0 1 .75.75v3.546a.75.75 0 0 1-1.5 0v-3.546a.75.75 0 0 1 .75-.75Z" clipRule="evenodd" /><path d="M12 2.25a.75.75 0 0 1 .75.75v1.285a.75.75 0 0 1-1.5 0V3a.75.75 0 0 1 .75-.75Zm-4.5 3a.75.75 0 0 0-1.5 0v1.285a.75.75 0 0 0 1.5 0V5.25Zm9 0a.75.75 0 0 0-1.5 0v1.285a.75.75 0 0 0 1.5 0V5.25Zm-9 9.75a.75.75 0 0 1 .75.75v1.285a.75.75 0 0 1-1.5 0v-1.285a.75.75 0 0 1 .75-.75Zm4.5 3a.75.75 0 0 0-1.5 0v1.285a.75.75 0 0 0 1.5 0V18Zm4.5-3a.75.75 0 0 1 .75.75v1.285a.75.75 0 0 1-1.5 0v-1.285a.75.75 0 0 1 .75-.75Z" clipRule="evenodd" /></svg>;
+const RefreshIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 0 24 24" width="18px" fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>);
+const LockIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0z" fill="none"/><path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z"/></svg>);
+const CopyIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>);
+const DownloadIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zm14-9h-4V3H9v8H5l7 7 7-7z"/></svg>);
+const UploadIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zm14-9h-4V3H9v8H5l7 7 7-7z" transform="rotate(180 12 12)" /></svg>);
 
 
-// --- CONTEXT ---
+// --- CONTEXTS & TOAST SYSTEM ---
 const AppContext = createContext<AppContextType | null>(null);
 const AuthContext = createContext<AuthContextType | null>(null);
-const useAuth = () => useContext(AuthContext);
+const ToastContext = createContext<ToastContextType | null>(null);
 
-// --- HELPER HOOK for keyboard accessibility ---
-const useAccessibleClick = (onClick, deps = []) => {
-    return useCallback((e) => {
-        if (e.type === 'click' || e.key === 'Enter' || e.key === ' ') {
-            if(e.type !== 'click') e.preventDefault();
-            onClick();
-        }
-    }, deps);
+const useAppContext = () => {
+    const context = useContext(AppContext);
+    if (!context) throw new Error("useAppContext must be used within an AppProvider");
+    return context;
 };
 
-
-// --- COMPONENTS ---
-const Header = ({ currentPage, setCurrentPage }) => {
-  const { themePreference, setThemePreference } = useContext(AppContext);
-  const { user, logout } = useAuth();
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
-  const navRef = useRef<HTMLElement>(null);
-  const linkRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const [indicatorStyle, setIndicatorStyle] = useState({});
-  
-  const navLinks = useMemo(() => {
-    const links = ['Accueil', 'Dictionnaire', 'Tuteur IA', 'Favoris', 'Historique', 'Guide', 'Le Faka\'uvea', 'Jeux', 'Certification'];
-    if (user?.role === 'admin') {
-        links.push('Gestion');
-    }
-    return links;
-  }, [user]);
-
-  useLayoutEffect(() => {
-    const activeLinkIndex = navLinks.findIndex(p => p === currentPage);
-    const activeLinkEl = linkRefs.current[activeLinkIndex];
-
-    if (activeLinkEl && navRef.current) {
-        // Only apply sliding indicator styles if not in mobile view
-        if (window.innerWidth > 950) {
-            setIndicatorStyle({
-                transform: `translateX(${activeLinkEl.offsetLeft}px)`,
-                width: `${activeLinkEl.offsetWidth}px`,
-                opacity: 1,
-            });
-        } else {
-             setIndicatorStyle({ opacity: 0 });
-        }
-    }
-  }, [currentPage, navLinks, isMenuOpen]); // Re-calculate on page change and when menu opens/closes
-
-
-  const handleNavClick = (page) => {
-    setCurrentPage(page);
-    setIsMenuOpen(false);
-  }
-  
-  const handleThemeChange = (theme: ThemePreference) => {
-    setThemePreference(theme);
-    setIsThemeMenuOpen(false);
-  }
-
-  const NavContent = () => (
-    <>
-      <nav className="header-nav" ref={navRef}>
-        <div className="nav-indicator" style={indicatorStyle} />
-        {navLinks.map((page, index) => (
-          <button
-            key={page}
-            ref={el => { linkRefs.current[index] = el; }}
-            onClick={() => handleNavClick(page)}
-            className="nav-link"
-            aria-current={currentPage === page ? 'page' : undefined}
-          >
-            {page}
-          </button>
-        ))}
-      </nav>
-      <div className="header-right-panel">
-        {user && <span className="user-info">Bonjour, {user.username}</span>}
-        {user && <button onClick={logout} className="logout-button">Déconnexion</button>}
-        <div className="theme-selector-wrapper">
-          <button onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)} className="theme-switcher-button" aria-label="Changer le thème">
-             {themePreference === 'light' ? <SunIcon/> : themePreference === 'dark' ? <MoonIcon/> : <SystemIcon/>}
-          </button>
-          {isThemeMenuOpen && (
-              <div className="theme-dropdown">
-                  <button onClick={() => handleThemeChange('light')}><SunIcon /> Clair</button>
-                  <button onClick={() => handleThemeChange('dark')}><MoonIcon /> Sombre</button>
-                  <button onClick={() => handleThemeChange('system')}><SystemIcon /> Système</button>
-              </div>
-          )}
-        </div>
-      </div>
-    </>
-  );
-
-  return (
-    <header className="app-header">
-      <h1 className="header-title">Faka'uvea</h1>
-      <div className="desktop-nav">
-        <NavContent />
-      </div>
-      <button className="mobile-menu-button" onClick={() => setIsMenuOpen(!isMenuOpen)} aria-label="Ouvrir le menu de navigation">
-        {isMenuOpen ? <CloseIcon /> : <MenuIcon />}
-      </button>
-      {isMenuOpen && <div className="mobile-nav"><NavContent /></div>}
-    </header>
-  );
+const useAuth = () => {
+    const context = useContext(AuthContext);
+    if (!context) throw new Error("useAuth must be used within an AuthProvider");
+    return context;
 };
 
-const WordCard = ({ entry, index }) => {
-  const { speak, favorites, toggleFavorite, logHistory } = useContext(AppContext);
-  const isFavorite = favorites.includes(entry.faka_uvea);
-  const hasAuthenticAudio = !!entry.audio_url;
+const useToast = () => {
+    const context = useContext(ToastContext);
+    if (!context) throw new Error("useToast must be used within a ToastProvider");
+    return context;
+};
 
-  const handleFavoriteClick = (e) => {
-    e.stopPropagation();
-    toggleFavorite(entry.faka_uvea);
-  };
+const ToastProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
+    const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const handleSpeakClick = (e) => {
-      e.stopPropagation();
-      speak(entry);
-  };
+    const addToast = useCallback((message: string, type: Toast['type'] = 'success') => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, message, type }]);
+        setTimeout(() => {
+            setToasts(currentToasts => currentToasts.filter(t => t.id !== id));
+        }, 4000);
+    }, []);
+    
+    const removeToast = (id: number) => {
+        setToasts(currentToasts => currentToasts.filter(t => t.id !== id));
+    };
 
-  const handleCardKeyDown = (e) => {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        logHistory(entry.faka_uvea);
-    }
-  };
-
-  return (
-    <article 
-        className="word-card" 
-        style={{ animationDelay: `${index * 50}ms` }}
-        onClick={() => logHistory(entry.faka_uvea)} 
-        onKeyDown={handleCardKeyDown}
-        role="button" 
-        tabIndex={0}
-        aria-label={`Voir les détails pour le mot ${entry.faka_uvea}`}
-    >
-        {entry.image_url && <img src={entry.image_url} alt={`Illustration pour ${entry.faka_uvea}`} className="word-card-image" />}
-        <div className="word-card-content">
-            <div className="word-card-header">
-                <div>
-                    <h3>{entry.faka_uvea}</h3>
-                    {entry.phonetic && <span className="word-details">{entry.phonetic}</span>}
-                </div>
-                <div className="word-card-actions">
-                    <button 
-                        className={`favorite-btn ${isFavorite ? 'active' : ''}`} 
-                        onClick={handleFavoriteClick} 
-                        aria-label={isFavorite ? `Retirer ${entry.faka_uvea} des favoris` : `Ajouter ${entry.faka_uvea} aux favoris`}
-                    >
-                        <StarIcon filled={isFavorite} />
-                    </button>
-                    <button 
-                        className={`tts-button ${hasAuthenticAudio ? 'authentic-audio' : ''}`}
-                        onClick={handleSpeakClick} 
-                        aria-label={`Écouter le mot ${entry.faka_uvea}`}
-                    >
-                        <SpeakerIcon />
-                    </button>
-                </div>
+    return (
+        <ToastContext.Provider value={{ addToast }}>
+            {children}
+            <div className="toast-container">
+                {toasts.map(toast => (
+                    <div key={toast.id} className={`toast-item toast-${toast.type}`} onClick={() => removeToast(toast.id)}>
+                        {toast.message}
+                    </div>
+                ))}
             </div>
-            <p className="word-details">{entry.type}</p>
-            <p className="word-translation">{entry.french}</p>
-            {entry.examples.length > 0 && (
-                <div className="word-example">
-                    <p className="faka-uvea-example">{entry.examples[0].faka_uvea}</p>
-                    <p>{entry.examples[0].french}</p>
+        </ToastContext.Provider>
+    );
+};
+
+
+// --- PROVIDERS ---
+const AppProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
+    const { addToast } = useToast();
+    const [themePreference, setThemePreference] = useLocalStorage<ThemePreference>('theme', 'light');
+    const [favorites, setFavorites] = useLocalStorage<string[]>('favorites', []);
+    const [history, setHistory] = useLocalStorage<string[]>('history', []);
+    const [dictionary, setDictionary] = useLocalStorage<DictionaryEntry[]>('dictionary', DICTIONARY_DATA);
+    const synth = window.speechSynthesis;
+    
+    useEffect(() => {
+        document.body.setAttribute('data-theme', themePreference);
+    }, [themePreference]);
+
+    const speak = useCallback((textOrEntry: string | DictionaryEntry) => {
+        if (!synth) return;
+        if (synth.speaking) synth.cancel();
+
+        let textToSpeak = '';
+        if (typeof textOrEntry === 'string') {
+            textToSpeak = textOrEntry;
+        } else {
+            textToSpeak = textOrEntry.faka_uvea;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+        const voices = synth.getVoices();
+        utterance.voice = voices.find(voice => voice.lang.startsWith('fr')) || voices[0];
+        utterance.lang = 'fr-FR';
+        utterance.pitch = 1;
+        utterance.rate = 0.9;
+        synth.speak(utterance);
+    }, [synth]);
+
+    const toggleFavorite = (faka_uvea: string) => {
+        const isCurrentlyFavorite = favorites.includes(faka_uvea);
+        setFavorites(prev => isCurrentlyFavorite
+            ? prev.filter(fav => fav !== faka_uvea)
+            : [...prev, faka_uvea]
+        );
+        addToast(isCurrentlyFavorite ? 'Retiré des favoris' : 'Ajouté aux favoris', 'info');
+    };
+
+    const logHistory = (faka_uvea: string) => {
+        setHistory(prev => [faka_uvea, ...prev.filter(item => item !== faka_uvea)].slice(0, 50));
+    };
+
+    const resetDictionary = () => {
+        if (window.confirm("Êtes-vous sûr de vouloir réinitialiser le dictionnaire ? Toutes les modifications locales seront perdues.")) {
+            setDictionary(DICTIONARY_DATA);
+            addToast("Dictionnaire réinitialisé avec succès.", "success");
+        }
+    };
+
+    const value = {
+        themePreference,
+        setThemePreference,
+        speak,
+        favorites,
+        toggleFavorite,
+        history,
+        logHistory,
+        setHistory,
+        dictionary,
+        setDictionary,
+        resetDictionary,
+    };
+
+    return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+};
+
+const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
+    const [user, setUser] = useSessionStorage<User | null>('user', null);
+    const [users, setUsers] = useLocalStorage<User[]>('users', USERS_DATA);
+
+    const login = (username, password) => {
+        const foundUser = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
+        if (foundUser) {
+            setUser(foundUser);
+            return true;
+        }
+        return false;
+    };
+
+    const logout = () => {
+        setUser(null);
+        sessionStorage.removeItem('aiTutorUnlocked');
+        sessionStorage.removeItem('aiTutorMessages');
+    };
+    
+    const addUser = (userToAdd: User) => {
+        setUsers(prev => [...prev, { ...userToAdd, id: Date.now().toString() }]);
+    };
+
+    const updateUser = (userToUpdate: User) => {
+        setUsers(prev => prev.map(u => {
+            if (u.id === userToUpdate.id) {
+                // Keep old password if new one is empty
+                return { ...userToUpdate, password: userToUpdate.password || u.password };
+            }
+            return u;
+        }));
+    };
+
+    const deleteUser = (userId: string) => {
+        setUsers(prev => prev.filter(u => u.id !== userId));
+    };
+
+    const resetUsers = () => {
+        if (window.confirm("Êtes-vous sûr de vouloir réinitialiser la liste des utilisateurs ? Toutes les modifications locales seront perdues.")) {
+            setUsers(USERS_DATA);
+        }
+    };
+
+    return (
+        <AuthContext.Provider value={{ user, users, login, logout, addUser, updateUser, deleteUser, resetUsers, setUsers }}>
+            {children}
+        </AuthContext.Provider>
+    );
+};
+
+
+// --- UI COMPONENTS ---
+
+const WordCard = ({ entry, onSelect, detailed = false }: { entry: DictionaryEntry, onSelect?: (entry: DictionaryEntry) => void, detailed?: boolean }) => {
+    const { speak, favorites, toggleFavorite, logHistory } = useAppContext();
+    const isFavorite = favorites.includes(entry.faka_uvea);
+    const hasAudio = !!entry.audio_url;
+
+    const handleCardClick = (e: React.MouseEvent | React.KeyboardEvent) => {
+        if (e.target instanceof HTMLElement) {
+             // prevent card click when clicking a button
+            if (e.target.closest('button')) return;
+        }
+        if(onSelect) {
+            onSelect(entry);
+        }
+        logHistory(entry.faka_uvea);
+    };
+
+    const handleSpeak = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        speak(entry);
+    };
+
+    const handleFavorite = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        toggleFavorite(entry.faka_uvea);
+    };
+
+    return (
+        <article
+            className="word-card"
+            onClick={handleCardClick}
+            onKeyDown={(e) => { if(e.key === 'Enter' || e.key === ' ') handleCardClick(e as any);}}
+            tabIndex={onSelect ? 0 : -1}
+            aria-label={`Voir les détails pour ${entry.faka_uvea}`}
+        >
+            {entry.image_url && <img src={entry.image_url} alt={`Illustration pour ${entry.faka_uvea}`} className="word-card-image" loading="lazy" />}
+            <div className="word-card-content">
+                <div className="word-card-header">
+                    <div>
+                        <h3>{entry.faka_uvea}</h3>
+                        {entry.phonetic && <p className="phonetic-details">{entry.phonetic}</p>}
+                    </div>
+                    <div className="word-card-actions">
+                         <button
+                            onClick={handleSpeak}
+                            className={`tts-button ${hasAudio ? 'authentic-audio' : ''}`}
+                            aria-label={`Écouter la prononciation de ${entry.faka_uvea}`}
+                            title={hasAudio ? 'Écouter l\'audio authentique' : 'Écouter la prononciation'}
+                        >
+                            <SpeakerIcon />
+                        </button>
+                        <button
+                            onClick={handleFavorite}
+                            className={`favorite-btn ${isFavorite ? 'active' : ''}`}
+                            aria-label={isFavorite ? `Retirer ${entry.faka_uvea} des favoris` : `Ajouter ${entry.faka_uvea} aux favoris`}
+                            title={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                        >
+                           <StarIcon filled={isFavorite} width={28} height={28} />
+                        </button>
+                    </div>
+                </div>
+
+                {entry.meanings.map((meaning, index) => (
+                    <div key={index} className="meaning-block">
+                         {entry.meanings.length > 1 && <span className="meaning-number">{index + 1}.</span>}
+                        <p className="word-details">{meaning.type}</p>
+                        <p className="word-translation">{meaning.french}</p>
+                        {meaning.examples.length > 0 && detailed && (
+                             <div className="word-example">
+                                <p className="faka-uvea-example">{meaning.examples[0].faka_uvea}</p>
+                                <p>{meaning.examples[0].french}</p>
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
+        </article>
+    );
+};
+
+const ThemeSwitcher = () => {
+    const { themePreference, setThemePreference } = useAppContext();
+    const [isOpen, setIsOpen] = useState(false);
+    const wrapperRef = useRef(null);
+
+    const themes = [
+        { name: 'light', label: 'Clair', icon: <SunIcon /> },
+        { name: 'dark', label: 'Sombre', icon: <MoonIcon /> },
+        { name: 'papyrus', label: 'Papyrus', icon: <ScrollIcon /> },
+        { name: 'system', label: 'Système', icon: <SystemIcon /> },
+    ];
+
+    const currentThemeIcon = themes.find(t => t.name === themePreference)?.icon || <SystemIcon/>
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [wrapperRef]);
+
+
+    return (
+        <div className="theme-selector-wrapper" ref={wrapperRef}>
+            <button
+                className="theme-switcher-button"
+                onClick={() => setIsOpen(!isOpen)}
+                aria-label="Changer de thème"
+                title="Changer de thème"
+            >
+                {currentThemeIcon}
+            </button>
+            {isOpen && (
+                <div className="theme-dropdown" role="menu">
+                    {themes.map(({ name, label, icon }) => (
+                         <button
+                            key={name}
+                            onClick={() => {
+                                setThemePreference(name as ThemePreference);
+                                setIsOpen(false);
+                            }}
+                            role="menuitem"
+                        >
+                            {icon}
+                            <span>{label}</span>
+                        </button>
+                    ))}
                 </div>
             )}
         </div>
-    </article>
-  );
+    );
 };
 
-const NoResults = ({ message, icon = null, suggestion = null, onSuggestionClick = null, children = null }) => (
-    <div className="no-results">
-        {icon || <svg xmlns="http://www.w3.org/2000/svg" height="60px" viewBox="0 0 24 24" width="60px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>}
-        <p>{message}</p>
-        {suggestion && onSuggestionClick && (
-            <p className="suggestion-text">
-                Vouliez-vous dire : <a href="#" onClick={(e) => { e.preventDefault(); onSuggestionClick(suggestion); }}>{suggestion}</a> ?
-            </p>
-        )}
-        {children && <div className="no-results-action">{children}</div>}
-    </div>
-);
 
+const Header = ({ currentPage, onNavClick }: { currentPage: string, onNavClick: (page: string) => void }) => {
+    const { user, logout } = useAuth();
+    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const navRef = useRef<HTMLDivElement>(null);
+    const indicatorRef = useRef<HTMLSpanElement>(null);
 
-const HomePage = ({ setCurrentPage }) => {
-    const wordOfTheDay = useMemo(() => {
-        const dayOfYear = Math.floor((new Date().getTime() - new Date(new Date().getFullYear(), 0, 0).getTime()) / (1000 * 60 * 60 * 24));
-        return DICTIONARY_DATA[dayOfYear % DICTIONARY_DATA.length];
-    }, []);
-
-    const createClickHandler = (page) => (e: React.MouseEvent | React.KeyboardEvent) => {
-        if (e.type === 'click' || (e as React.KeyboardEvent).key === 'Enter' || (e as React.KeyboardEvent).key === ' ') {
-            if(e.type !== 'click') e.preventDefault();
-            setCurrentPage(page);
+    const baseNavItems = [
+        { id: 'home', label: 'Accueil', icon: <HomeIcon /> },
+        { id: 'dictionary', label: 'Dictionnaire', icon: <BookOpenIcon /> },
+        { id: 'games', label: 'Jeux', icon: <PuzzlePieceIcon /> },
+        { id: 'guide', label: 'Guide', icon: <LanguageIcon /> },
+        { id: 'favorites', label: 'Favoris', icon: <StarIcon filled={true} /> },
+        { id: 'history', label: 'Historique', icon: <HistoryIcon /> },
+        { id: 'faka-uvea', label: 'Langue Faka\'uvea', icon: <SparklesIcon /> },
+        { id: 'ai_tutor', label: 'Tuteur IA', icon: <ChatBubbleIcon /> },
+        { id: 'exams', label: 'EXAMS', icon: <TrophyIcon /> },
+    ];
+    
+    const navItems = useMemo(() => {
+        const items = [...baseNavItems];
+        if (user?.role === 'admin') {
+            items.push({ id: 'gestion', label: 'Gestion Dico', icon: <CogIcon /> });
+            items.push({ id: 'user_management', label: 'Utilisateurs', icon: <UsersIcon /> });
         }
+        return items;
+    }, [user]);
+
+
+    const handleNavClick = (pageId: string, e: React.MouseEvent) => {
+        e.preventDefault();
+        onNavClick(pageId);
+        setIsMobileMenuOpen(false);
     };
     
+    useEffect(() => {
+        if (isMobileMenuOpen) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = 'auto';
+        }
+        return () => { document.body.style.overflow = 'auto'; };
+    }, [isMobileMenuOpen]);
+
+
+    useLayoutEffect(() => {
+        if (!navRef.current || !indicatorRef.current) return;
+        
+        const currentLink = navRef.current.querySelector(`[aria-current="page"]`) as HTMLElement;
+        if (currentLink) {
+             indicatorRef.current.style.opacity = '1';
+             indicatorRef.current.style.width = `${currentLink.offsetWidth}px`;
+             indicatorRef.current.style.transform = `translateX(${currentLink.offsetLeft}px)`;
+        } else {
+             indicatorRef.current.style.opacity = '0';
+        }
+    }, [currentPage, navItems]);
+
+
+    const renderDesktopNavLinks = () => navItems.map(item => (
+        <a
+            key={item.id}
+            href={`#${item.id}`}
+            className="nav-link"
+            aria-current={currentPage === item.id ? 'page' : undefined}
+            onClick={(e) => handleNavClick(item.id, e)}
+        >
+            {React.cloneElement(item.icon, { width: 18, height: 18 })}
+            <span>{item.label}</span>
+        </a>
+    ));
+    
+    const renderMobileNavLinks = () => navItems.map(item => (
+         <li key={item.id}>
+            <a
+                href={`#${item.id}`}
+                className={currentPage === item.id ? 'active' : ''}
+                onClick={(e) => handleNavClick(item.id, e)}
+            >
+                {React.cloneElement(item.icon, { width: 22, height: 22 })}
+                <span>{item.label}</span>
+            </a>
+        </li>
+    ));
+
+    return (
+        <header className="app-header">
+            <a href="#home" onClick={(e) => handleNavClick('home', e)} className="header-title-link">
+                <h1 className="header-title">Faka'uvea</h1>
+            </a>
+            
+             <nav className="desktop-nav" aria-label="Navigation principale">
+                <div className="header-nav" ref={navRef}>
+                    {renderDesktopNavLinks()}
+                    <span ref={indicatorRef} className="nav-indicator"></span>
+                </div>
+             </nav>
+
+            <div className="header-right-panel">
+                <span className="user-info">Utilisateur: {user.username}</span>
+                <button onClick={logout} className="logout-button" title="Se déconnecter">Déconnexion</button>
+                <ThemeSwitcher />
+            </div>
+
+            <button
+                className="mobile-menu-toggle"
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                aria-label="Ouvrir le menu"
+            >
+                {isMobileMenuOpen ? <CloseIcon /> : <MenuIcon />}
+            </button>
+
+             {isMobileMenuOpen && (
+                <nav className="mobile-nav-menu">
+                    <div className="mobile-nav-header">
+                        <h2 className="mobile-nav-title">Menu</h2>
+                         <button
+                            className="mobile-menu-close"
+                            onClick={() => setIsMobileMenuOpen(false)}
+                            aria-label="Fermer le menu"
+                        >
+                            <CloseIcon />
+                        </button>
+                    </div>
+                     <ul className="mobile-nav-links">
+                        {renderMobileNavLinks()}
+                     </ul>
+                     <div className="mobile-nav-footer">
+                        <div className="mobile-user-info">
+                            <span>Connecté: <strong>{user.username}</strong></span>
+                            <button onClick={() => { logout(); setIsMobileMenuOpen(false); }} className="logout-button">Déconnexion</button>
+                        </div>
+                        <ThemeSwitcher />
+                     </div>
+                </nav>
+            )}
+        </header>
+    );
+};
+
+
+const Footer = ({ onNavClick }: { onNavClick: (page: string) => void }) => {
+    const handleLinkClick = (pageId: string, e: React.MouseEvent) => {
+        e.preventDefault();
+        onNavClick(pageId);
+    }
+    return (
+      <footer className="app-footer">
+        <div className="footer-content">
+          <div className="footer-column">
+            <h4>À Propos</h4>
+            <p>Ce dictionnaire Faka'uvea-Français est un outil communautaire visant à préserver et promouvoir la langue wallisienne.</p>
+          </div>
+          <div className="footer-column">
+            <h4>Navigation</h4>
+            <ul className="footer-links">
+              <li><a href="#home" onClick={(e) => handleLinkClick('home', e)}>Accueil</a></li>
+              <li><a href="#dictionary" onClick={(e) => handleLinkClick('dictionary', e)}>Dictionnaire</a></li>
+              <li><a href="#games" onClick={(e) => handleLinkClick('games', e)}>Jeux</a></li>
+              <li><a href="#guide" onClick={(e) => handleLinkClick('guide', e)}>Guide de conversation</a></li>
+              <li><a href="#favorites" onClick={(e) => handleLinkClick('favorites', e)}>Favoris</a></li>
+              <li><a href="#history" onClick={(e) => handleLinkClick('history', e)}>Historique</a></li>
+            </ul>
+          </div>
+          <div className="footer-column">
+            <h4>Ressources</h4>
+            <ul className="footer-links">
+               <li><a href="#faka-uvea" onClick={(e) => handleLinkClick('faka-uvea', e)}>Langue Faka'uvea</a></li>
+               <li><a href="#exams" onClick={(e) => handleLinkClick('exams', e)}>Diplômes</a></li>
+               <li><a href="#ai_tutor" onClick={(e) => handleLinkClick('ai_tutor', e)}>Tuteur IA</a></li>
+            </ul>
+          </div>
+        </div>
+        <div className="footer-bottom">
+          <p>&copy; {new Date().getFullYear()} Dictionnaire Faka'uvea. Tous droits réservés.</p>
+        </div>
+      </footer>
+    );
+}
+
+// --- PAGES ---
+
+const HomePage = ({ onNavClick }: { onNavClick: (page: string) => void }) => {
+    const { dictionary } = useAppContext();
+    const wordOfTheDay = useMemo(() => dictionary.length > 0 ? dictionary[Math.floor(Math.random() * dictionary.length)] : null, [dictionary]);
+
     const features = [
-        { page: 'Dictionnaire', title: 'Dictionnaire', description: "Cherchez, filtrez et découvrez des mots.", icon: <BookOpenIcon /> },
-        { page: 'Tuteur IA', title: 'Tuteur IA', description: "Pratiquez la conversation avec notre tuteur intelligent.", icon: <SparklesIcon/> },
-        { page: 'Favoris', title: 'Mots Favoris', description: "Consultez votre liste de mots sauvegardés.", icon: <StarIcon filled={true} /> },
-        { page: 'Guide', title: 'Guide de conversation', description: "Apprenez les phrases essentielles pour le quotidien.", icon: <ChatBubbleIcon /> },
-        { page: 'Le Faka\'uvea', title: 'La Langue', description: "Explorez l'alphabet, la prononciation et la grammaire.", icon: <LanguageIcon /> },
-        { page: 'Jeux', title: 'Jeux Ludiques', description: "Testez vos connaissances de manière amusante.", icon: <PuzzlePieceIcon /> },
-        { page: 'Certification', title: 'Certification', description: "Validez votre niveau et obtenez un certificat.", icon: <TrophyIcon /> },
+        {
+            title: "Dictionnaire Complet",
+            description: "Explorez des milliers de mots, avec prononciations et exemples.",
+            icon: <BookOpenIcon width={32} height={32}/>,
+            page: "dictionary"
+        },
+        {
+            title: "Jeux Interactifs",
+            description: "Apprenez en vous amusant avec nos jeux de mémoire, flashcards et plus.",
+            icon: <PuzzlePieceIcon width={32} height={32}/>,
+            page: "games"
+        },
+        {
+            title: "Guide de Conversation",
+            description: "Maîtrisez les phrases essentielles pour vos échanges quotidiens.",
+            icon: <LanguageIcon width={32} height={32}/>,
+            page: "guide"
+        },
+        {
+            title: "Tuteur IA",
+            description: "Posez vos questions et pratiquez avec notre tuteur intelligent.",
+            icon: <ChatBubbleIcon width={32} height={32}/>,
+            page: "ai_tutor"
+        },
+        {
+            title: "Obtenez un Diplôme",
+            description: "Testez vos connaissances et obtenez des diplômes pour valider votre niveau.",
+            icon: <TrophyIcon width={32} height={32}/>,
+            page: "exams"
+        },
+         {
+            title: "La Langue Faka'uvea",
+            description: "Découvrez l'alphabet, la prononciation et l'histoire de la langue.",
+            icon: <SparklesIcon width={32} height={32}/>,
+            page: "faka-uvea"
+        }
     ];
 
     return (
-        <div className="home-page">
+        <div className="page-container">
             <section className="home-hero">
-                <h1 className="hero-title">Mālō te ma'uli i te Lalolagi o Faka'uvea</h1>
-                <p className="hero-subtitle">Votre portail pour explorer la richesse de la langue et de la culture wallisienne.</p>
-                <button className="button-primary" onClick={() => setCurrentPage('Dictionnaire')}>
-                    Explorer le dictionnaire
-                </button>
+                <h1 className="hero-title">Faka'uvea</h1>
+                <p className="hero-subtitle">Le portail de référence pour la langue et la culture de Wallis ('Uvea)</p>
+                <button className="button-primary" onClick={() => onNavClick('dictionary')}>Explorer le dictionnaire</button>
             </section>
 
             <section className="home-section">
-                <h2>Mot du jour</h2>
-                <div className="word-of-the-day">
-                    {wordOfTheDay && <WordCard entry={wordOfTheDay} index={0} />}
-                </div>
-            </section>
-            
-            <section className="home-section">
-                <h2>Commencez votre voyage</h2>
+                <h2>Fonctionnalités Principales</h2>
                 <div className="features-grid">
-                    {features.map(({ page, title, description, icon }) => (
-                         <div key={page} className="feature-card" onClick={createClickHandler(page)} onKeyDown={createClickHandler(page)} role="button" tabIndex={0}>
-                            <div className="feature-card-icon">{icon}</div>
-                            <h4>{title}</h4>
-                            <p>{description}</p>
+                    {features.map(feature => (
+                        <div key={feature.page} className="feature-card" onClick={() => onNavClick(feature.page)}>
+                             <div className="feature-card-icon">{feature.icon}</div>
+                            <h4>{feature.title}</h4>
+                            <p>{feature.description}</p>
                         </div>
                     ))}
                 </div>
             </section>
+
+            <section className="home-section">
+                <h2>Mot du Jour</h2>
+                <div className="word-of-the-day">
+                    {wordOfTheDay ? (
+                        <WordCard entry={wordOfTheDay} detailed={true}/>
+                    ) : (
+                        <p>Chargement du mot du jour...</p>
+                    )}
+                </div>
+            </section>
         </div>
     );
 };
 
+
 const DictionaryPage = () => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [activeLetter, setActiveLetter] = useState('A');
-  const [suggestion, setSuggestion] = useState<string | null>(null);
+    const { dictionary, logHistory } = useAppContext();
+    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedLetter, setSelectedLetter] = useState('');
+    
+    const alphabetStatus = useMemo(() => {
+        const activeLetters = new Set(dictionary.map(entry => entry.faka_uvea.charAt(0).toUpperCase()));
+        return ALPHABET.map(letter => ({
+            letter,
+            enabled: activeLetters.has(letter)
+        }));
+    }, [dictionary]);
 
-  const filteredData = useMemo(() => {
-    return DICTIONARY_DATA.filter(entry => {
-        const matchesSearch = searchTerm === '' ||
-            entry.faka_uvea.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            entry.french.toLowerCase().includes(searchTerm.toLowerCase());
-        
-        const matchesLetter = activeLetter === null ||
-            entry.faka_uvea.toLowerCase().startsWith(activeLetter.toLowerCase());
+    const filteredDictionary = useMemo(() => {
+        let results = dictionary;
+        if (selectedLetter) {
+            results = results.filter(entry => entry.faka_uvea.toLowerCase().startsWith(selectedLetter.toLowerCase()));
+        }
+        if (searchTerm) {
+            const lowerCaseSearch = searchTerm.toLowerCase();
+            results = results.filter(entry =>
+                entry.faka_uvea.toLowerCase().includes(lowerCaseSearch) ||
+                entry.meanings.some(m => m.french.toLowerCase().includes(lowerCaseSearch))
+            );
+        }
+        return results;
+    }, [searchTerm, selectedLetter, dictionary]);
 
-        return matchesSearch && matchesLetter;
-    });
-  }, [searchTerm, activeLetter]);
-  
-  useEffect(() => {
-    if (filteredData.length === 0 && searchTerm.length > 2) {
-        let bestMatch: string | null = null;
-        let minDistance = 4; // Max distance to consider a suggestion
+    const handleLetterSelect = (letter: string) => {
+        setSelectedLetter(letter);
+        setSearchTerm('');
+    };
 
-        DICTIONARY_DATA.forEach(entry => {
-            const distance = levenshteinDistance(searchTerm, entry.faka_uvea);
-            if (distance < minDistance) {
-                minDistance = distance;
-                bestMatch = entry.faka_uvea;
-            }
-        });
-        setSuggestion(bestMatch);
-    } else {
-        setSuggestion(null);
-    }
-  }, [filteredData, searchTerm]);
+    const clearFilter = () => {
+        setSelectedLetter('');
+        setSearchTerm('');
+    };
 
-  const handleLetterClick = (letter) => {
-    setActiveLetter(letter === activeLetter ? null : letter);
-  }
+    const getSuggestion = () => {
+        if (searchTerm.length > 2 && filteredDictionary.length === 0) {
+            let bestMatch: DictionaryEntry | null = null;
+            let minDistance = Infinity;
 
-  const handleSuggestionClick = (suggestedTerm) => {
-    setSearchTerm(suggestedTerm);
-    setSuggestion(null);
-  }
+            dictionary.forEach(entry => {
+                const distance = levenshteinDistance(searchTerm, entry.faka_uvea);
+                if (distance < minDistance && distance < 4) {
+                    minDistance = distance;
+                    bestMatch = entry;
+                }
+            });
 
-  return (
-    <>
-      <h1 className="page-title">Dictionnaire</h1>
-      <div className="dictionary-controls">
-        <input type="search" placeholder="Rechercher en faka'uvea ou en français..." className="search-bar" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-        <div className="alphabet-nav" role="navigation" aria-label="Navigation alphabétique">
-          {ALPHABET_STATUS.map(({ letter, enabled }) => (
-            <button key={letter} onClick={() => handleLetterClick(letter)} className={activeLetter === letter ? 'active' : ''} disabled={!enabled} aria-pressed={activeLetter === letter}>
-              {letter}
-            </button>
-          ))}
-          {activeLetter && <button className="clear" onClick={() => setActiveLetter(null)}>Tout</button>}
+            return bestMatch;
+        }
+        return null;
+    };
+
+    const suggestion = getSuggestion();
+
+    return (
+        <div className="page-container">
+            <h1 className="page-title">Dictionnaire Faka'uvea</h1>
+            <div className="dictionary-controls">
+                <input
+                    type="search"
+                    className="search-bar"
+                    placeholder="Rechercher un mot en faka'uvea ou en français..."
+                    value={searchTerm}
+                    onChange={(e) => {
+                        setSearchTerm(e.target.value);
+                        setSelectedLetter('');
+                    }}
+                />
+                <nav className="alphabet-nav" aria-label="Filtre par lettre">
+                    {alphabetStatus.map(({ letter, enabled }) => (
+                        <button
+                            key={letter}
+                            onClick={() => handleLetterSelect(letter)}
+                            className={selectedLetter === letter ? 'active' : ''}
+                        >
+                            {letter}
+                        </button>
+                    ))}
+                    <button onClick={clearFilter} className="clear">Tout</button>
+                </nav>
+            </div>
+            <div className="word-grid">
+                {filteredDictionary.length > 0 ? (
+                    filteredDictionary.map((entry, index) => (
+                        <WordCard key={entry.faka_uvea + index} entry={entry} detailed={true} onSelect={() => logHistory(entry.faka_uvea)} />
+                    ))
+                ) : (
+                    <div className="no-results">
+                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M11.25 2.25c-5.18 0-9.447 4.033-9.948 9.135a.75.75 0 0 0 .736.865h3.455a.75.75 0 0 0 .713-.56C6.425 8.74 8.635 6.75 11.25 6.75c2.31 0 4.295 1.592 4.88 3.73a.75.75 0 0 0 .712.57h3.456a.75.75 0 0 0 .735-.865C20.697 6.283 16.43 2.25 11.25 2.25Z" /><path fillRule="evenodd" d="M3.569 14.25a.75.75 0 0 1 .74-.65h.335c1.173 0 2.278.43 3.123 1.159a.75.75 0 0 1-.962 1.15A2.999 2.999 0 0 0 4.598 15h-.25a.75.75 0 0 1-.78-.75ZM15.268 15.91a.75.75 0 0 1 .962-1.15c.844-.729 1.95-1.159 3.122-1.159h.335a.75.75 0 0 1 .74.65.75.75 0 0 1-.78.75h-.25a3 3 0 0 0-2.202.841.75.75 0 0 1-.962-1.15Z" clipRule="evenodd" /><path d="M11.25 12.75a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Z" /></svg>
+                        <p>Aucun résultat trouvé pour "{searchTerm || `lettre ${selectedLetter}`}".</p>
+                        {suggestion && (
+                           <p className="suggestion-text">
+                                Vouliez-vous dire <a onClick={() => setSearchTerm(suggestion.faka_uvea)}>{suggestion.faka_uvea}</a> ?
+                           </p>
+                        )}
+                         <div className="no-results-action">
+                             <button className="button-secondary" onClick={clearFilter}>Voir tous les mots</button>
+                         </div>
+                    </div>
+                )}
+            </div>
         </div>
-      </div>
-      <section className="word-grid" aria-live="polite">
-        {filteredData.length > 0 ? (
-          filteredData.map((entry, index) => <WordCard key={entry.faka_uvea} entry={entry} index={index} />)
-        ) : (
-          <NoResults 
-            message="Aucun mot trouvé pour votre recherche." 
-            suggestion={suggestion}
-            onSuggestionClick={handleSuggestionClick}
-          />
-        )}
-      </section>
-    </>
-  );
+    );
 };
 
 const FavoritesPage = () => {
-    const { favorites, setCurrentPage } = useContext(AppContext);
-    
-    const favoriteEntries = useMemo(() => {
-        return DICTIONARY_DATA.filter(entry => favorites.includes(entry.faka_uvea));
-    }, [favorites]);
+    const { favorites, dictionary, logHistory } = useAppContext();
+    const favoriteEntries = useMemo(() =>
+        dictionary.filter(entry => favorites.includes(entry.faka_uvea)),
+        [favorites, dictionary]
+    );
 
     return (
-        <>
+        <div className="page-container">
             <h1 className="page-title">Mes Favoris</h1>
-            <section className="word-grid">
-                {favoriteEntries.length > 0 ? (
-                    favoriteEntries.map((entry, index) => <WordCard key={entry.faka_uvea} entry={entry} index={index} />)
-                ) : (
-                    <NoResults 
-                        message="Vous n'avez pas encore ajouté de mots à vos favoris."
-                        icon={<StarIcon filled={false} />}
-                    >
-                      <button className="button-primary" onClick={() => setCurrentPage('Dictionnaire')}>
-                          Explorer le dictionnaire
-                      </button>
-                    </NoResults>
-                )}
-            </section>
-        </>
+            {favoriteEntries.length > 0 ? (
+                <div className="word-grid">
+                    {favoriteEntries.map((entry, index) => (
+                        <WordCard key={entry.faka_uvea + index} entry={entry} detailed={true} onSelect={() => logHistory(entry.faka_uvea)} />
+                    ))}
+                </div>
+            ) : (
+                <div className="empty-page-state">
+                    <StarIcon filled={true} width={48} height={48} />
+                    <h2>Aucun favori pour le moment</h2>
+                    <p>Cliquez sur l'étoile sur un mot pour l'ajouter à vos favoris.</p>
+                </div>
+            )}
+        </div>
     );
 };
 
 const HistoryPage = () => {
-    const { history, setCurrentPage } = useContext(AppContext);
-    
-    const historyEntries = useMemo(() => {
-        return history.map(word => DICTIONARY_DATA.find(entry => entry.faka_uvea === word)).filter(Boolean);
-    }, [history]);
+    const { history, dictionary, setHistory, logHistory } = useAppContext();
+    const historyEntries = useMemo(() =>
+        history.map(faka_uvea => dictionary.find(entry => entry.faka_uvea === faka_uvea)).filter(Boolean) as DictionaryEntry[],
+        [history, dictionary]
+    );
+
+    const handleClearHistory = () => {
+        if (window.confirm("Êtes-vous sûr de vouloir vider votre historique de consultation ?")) {
+            setHistory([]);
+        }
+    };
 
     return (
-        <>
-            <h1 className="page-title">Mon Historique</h1>
-            <section className="word-grid">
-                {historyEntries.length > 0 ? (
-                    historyEntries.map((entry, index) => <WordCard key={entry.faka_uvea} entry={entry} index={index} />)
-                ) : (
-                    <NoResults 
-                        message="Votre historique de consultation est vide."
-                        icon={<HistoryIcon />}
-                    >
-                      <button className="button-primary" onClick={() => setCurrentPage('Dictionnaire')}>
-                          Commencer à explorer
-                      </button>
-                    </NoResults>
+        <div className="page-container">
+             <div className="gestion-header" style={{ gridTemplateAreas: '"title actions"' } as React.CSSProperties}>
+                <h1 className="page-title">Historique</h1>
+                {history.length > 0 && (
+                     <div className="gestion-actions">
+                        <button className="button-secondary" onClick={handleClearHistory}>
+                             Vider l'historique
+                        </button>
+                    </div>
                 )}
-            </section>
-        </>
+            </div>
+            {historyEntries.length > 0 ? (
+                <div className="word-grid">
+                    {historyEntries.map((entry, index) => (
+                        <WordCard key={entry.faka_uvea + index} entry={entry} detailed={true} onSelect={() => logHistory(entry.faka_uvea)} />
+                    ))}
+                </div>
+            ) : (
+                <div className="empty-page-state">
+                    <HistoryIcon width={48} height={48} />
+                    <h2>Aucun historique</h2>
+                    <p>Votre historique de consultation des mots apparaîtra ici.</p>
+                </div>
+            )}
+        </div>
     );
 };
 
-
 const GuidePage = () => {
-    const { speak } = useContext(AppContext);
-    const [searchTerm, setSearchTerm] = useState('');
+    const { speak } = useAppContext();
+    const { addToast } = useToast();
+    const [search, setSearch] = useState("");
 
-    const playCategory = (category) => {
-        category.phrases.forEach((phrase, index) => {
-            setTimeout(() => speak(phrase.faka_uvea), index * 2000);
+    const filteredGuideData = useMemo(() => {
+        if (!search) return GUIDE_DATA;
+        const lowerSearch = search.toLowerCase();
+        return GUIDE_DATA.map(category => {
+            const filteredPhrases = category.phrases.filter(phrase =>
+                phrase.faka_uvea.toLowerCase().includes(lowerSearch) ||
+                phrase.french.toLowerCase().includes(lowerSearch)
+            );
+            return { ...category, phrases: filteredPhrases };
+        }).filter(category => category.phrases.length > 0);
+    }, [search]);
+
+    const playAll = (phrases: {faka_uvea: string; french: string}[]) => {
+        phrases.forEach((phrase, index) => {
+            setTimeout(() => {
+                speak(phrase.faka_uvea);
+            }, index * 2000); // 2 seconds delay between each phrase
         });
     };
     
-    const filteredGuideData = useMemo(() => {
-        if (!searchTerm) return GUIDE_DATA;
-        const lowercasedFilter = searchTerm.toLowerCase();
-        return GUIDE_DATA.map(category => {
-            const matchingPhrases = category.phrases.filter(
-                phrase => phrase.faka_uvea.toLowerCase().includes(lowercasedFilter) ||
-                          phrase.french.toLowerCase().includes(lowercasedFilter)
-            );
-            return { ...category, phrases: matchingPhrases };
-        }).filter(category => category.phrases.length > 0);
-    }, [searchTerm]);
+    const handleCopy = (text: string) => {
+        navigator.clipboard.writeText(text).then(() => {
+            addToast('Phrase copiée !', 'success');
+        }, () => {
+            addToast('Erreur lors de la copie', 'error');
+        });
+    };
 
     return (
-        <>
-            <h1 className="page-title">Guide de conversation</h1>
+        <div className="page-container">
+            <h1 className="page-title">Guide de Conversation</h1>
             <div className="guide-controls">
-                 <input 
-                    type="search" 
-                    placeholder="Rechercher une phrase..." 
-                    className="search-bar" 
-                    value={searchTerm} 
-                    onChange={e => setSearchTerm(e.target.value)}
-                 />
+                 <input
+                    type="search"
+                    className="search-bar"
+                    placeholder="Rechercher une phrase..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                />
             </div>
-            {filteredGuideData.map(category => (
-                <section key={category.name} className="guide-category">
+            {filteredGuideData.map((category, index) => (
+                <section key={category.name} className="guide-category" style={{animationDelay: `${index * 100}ms`}}>
                     <div className="guide-category-header">
                         <h3>{category.name}</h3>
-                        <button className="play-all-btn" onClick={() => playCategory(category)} aria-label={`Écouter toutes les phrases de la catégorie ${category.name}`}>
+                        <button className="play-all-btn" onClick={() => playAll(category.phrases)} title="Écouter toutes les phrases de cette catégorie">
                             <PlayIcon />
-                            <span>Tout lire</span>
+                            Tout écouter
                         </button>
                     </div>
+
                     <ul className="phrase-list">
-                        {category.phrases.map((phrase, index) => (
-                            <li key={phrase.faka_uvea} className="phrase-item" style={{ animationDelay: `${index * 50}ms` }}>
+                        {category.phrases.map((phrase, pIndex) => (
+                            <li key={pIndex} className="phrase-item" style={{animationDelay: `${(pIndex * 50)}ms`}}>
                                 <div className="phrase-text">
                                     <p className="faka-uvea-phrase">{phrase.faka_uvea}</p>
                                     <p className="french-phrase">{phrase.french}</p>
                                 </div>
-                                <button className="tts-button" onClick={() => speak(phrase.faka_uvea)} aria-label={`Écouter la phrase ${phrase.faka_uvea}`}>
-                                    <SpeakerIcon />
-                                </button>
+                                <div className="phrase-actions">
+                                    <button
+                                        onClick={() => handleCopy(phrase.faka_uvea)}
+                                        className="tts-button"
+                                        aria-label={`Copier : ${phrase.faka_uvea}`}
+                                        title="Copier la phrase"
+                                    >
+                                        <CopyIcon />
+                                    </button>
+                                    <button
+                                        onClick={() => speak(phrase.faka_uvea)}
+                                        className="tts-button"
+                                        aria-label={`Écouter : ${phrase.faka_uvea}`}
+                                        title="Écouter la phrase"
+                                    >
+                                        <SpeakerIcon />
+                                    </button>
+                                </div>
                             </li>
                         ))}
                     </ul>
                 </section>
             ))}
-            {filteredGuideData.length === 0 && (
-                <NoResults message="Aucune phrase trouvée pour votre recherche." />
-            )}
-        </>
+        </div>
     );
 };
 
 const AITutorPage = () => {
-    const [chat, setChat] = useState<Chat | null>(null);
-    const [messages, setMessages] = useState<{ role: 'user' | 'model', text: string }[]>([]);
-    const [userInput, setUserInput] = useState('');
+    const [isUnlocked, setIsUnlocked] = useSessionStorage('aiTutorUnlocked', false);
+    const [passwordInput, setPasswordInput] = useState('');
+    const [unlockError, setUnlockError] = useState('');
+    
+    const [messages, setMessages] = useSessionStorage<{text: string; sender: 'user' | 'ai'}[]>('aiTutorMessages', []);
+    const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const chatWindowRef = useRef<HTMLDivElement>(null);
+    const chat = useRef<Chat | null>(null);
 
-    // System instruction for the AI tutor
-    const systemInstruction = `You are a friendly and patient language tutor for Faka'uvea (Wallisian language). Your name is 'Kele'.
-- If the user speaks in French, respond primarily in Faka'uvea with the French translation below it in parentheses. For example: "Io, e lelei. (Oui, c'est bien.)"
-- If the user speaks in Faka'uvea, respond in Faka'uvea. If their Faka'uvea has a minor error, gently correct it in your response and explain the correction briefly in French in parentheses. For example: "Mālō te ma'uli! (Note: 'lelei ma'uli' is less common, 'mālō te ma'uli' is the standard greeting)".
-- Keep your answers relatively short and conversational, suitable for a language learner.
-- Your goal is to encourage practice and make learning fun.
-- Start the conversation by introducing yourself in Faka'uvea and asking how you can help.`;
+     useEffect(() => {
+        if (!isUnlocked) return;
 
-    // Initialize chat
-    useEffect(() => {
-        const initChat = async () => {
+        chat.current = ai.chats.create({
+          model: 'gemini-2.5-flash',
+          config: {
+            systemInstruction: 'You are a friendly and helpful tutor for the Faka\'uvea (Wallisian) language. Your name is Tali. Your goal is to help users learn and practice Faka\'uvea. Always be encouraging. If a user asks a question about something other than the language, gently guide them back to the topic of Faka\'uvea. Answer in French, but you can use Faka\'uvea words and phrases in your explanations. Start the first message by introducing yourself.',
+          },
+        });
+        
+        if (messages.length === 0) {
             setIsLoading(true);
-            try {
-                const newChat = ai.chats.create({
-                    model: 'gemini-2.5-flash',
-                    config: { systemInstruction },
-                    history: []
-                });
-                setChat(newChat);
-    
-                const stream = await newChat.sendMessageStream({ message: "Introduce yourself and greet the user." });
-                
-                let fullText = "";
-                for await (const chunk of stream) {
-                    fullText += chunk.text;
-                }
-                
-                setMessages([{ role: 'model', text: fullText }]);
-            } catch (error) {
-                console.error("AI Tutor Initialization Error:", error);
-                setMessages([{ role: 'model', text: "Désolé, une erreur est survenue lors de l'initialisation du tuteur. Assurez-vous que la clé API est configurée."}]);
-            } finally {
-                setIsLoading(false);
-            }
-        };
-        initChat();
-    }, []);
+            chat.current.sendMessage({ message: "Introduce yourself" }).then(response => {
+                 setMessages([{ text: response.text, sender: 'ai' }]);
+            }).finally(() => {
+                 setIsLoading(false);
+            });
+        }
+    }, [isUnlocked]);
 
-    // Scroll to bottom of chat window
+
     useEffect(() => {
         if (chatWindowRef.current) {
             chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight;
         }
-    }, [messages, isLoading]);
+    }, [messages]);
 
-    const handleSendMessage = async (e: React.FormEvent) => {
+    const handleUnlockSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!userInput.trim() || isLoading || !chat) return;
+        if (passwordInput === '123') {
+            setIsUnlocked(true);
+            setUnlockError('');
+        } else {
+            setUnlockError('Mot de passe incorrect.');
+            setPasswordInput('');
+        }
+    };
 
-        const userMessage = { role: 'user' as const, text: userInput };
+    const sendMessage = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!input.trim() || isLoading || !isUnlocked) return;
+
+        const userMessage = { text: input, sender: 'user' as const };
         setMessages(prev => [...prev, userMessage]);
-        const currentInput = userInput;
-        setUserInput('');
+        setInput('');
         setIsLoading(true);
 
         try {
-            const stream = await chat.sendMessageStream({ message: currentInput });
-            
-            let fullText = "";
-            setMessages(prev => [...prev, { role: 'model', text: '' }]);
-
-            for await (const chunk of stream) {
-                fullText += chunk.text;
-                setMessages(prev => {
-                    const newMessages = [...prev];
-                    newMessages[newMessages.length - 1] = { role: 'model', text: fullText };
-                    return newMessages;
-                });
+            if (chat.current) {
+                const response = await chat.current.sendMessage({ message: input });
+                const aiMessage = { text: response.text, sender: 'ai' as const };
+                setMessages(prev => [...prev, aiMessage]);
             }
-
         } catch (error) {
-            console.error("Error sending message:", error);
-            setMessages(prev => [...prev, { role: 'model', text: "Désolé, une erreur s'est produite. Veuillez réessayer." }]);
+            console.error("Error sending message to AI:", error);
+            const errorMessage = { text: "Désolé, une erreur est survenue. Veuillez réessayer.", sender: 'ai' as const };
+            setMessages(prev => [...prev, errorMessage]);
         } finally {
             setIsLoading(false);
         }
     };
 
+    const UserAvatar = () => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M7.5 6a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0ZM3.751 20.105a8.25 8.25 0 0 1 16.498 0 .75.75 0 0 1-.437.695A18.683 18.683 0 0 1 12 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 0 1-.437-.695Z" clipRule="evenodd" /></svg>;
+    const AIAvatar = () => <SparklesIcon width={24} height={24} />;
+
+    if (!isUnlocked) {
+        return (
+            <div className="page-container ai-tutor-lock-overlay">
+                <form onSubmit={handleUnlockSubmit} className="lock-form-container">
+                    <LockIcon />
+                    <h3>Accès sécurisé</h3>
+                    <p>Veuillez entrer le mot de passe pour accéder au Tuteur IA.</p>
+                    <input
+                        type="password"
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        className="login-input"
+                        placeholder="Mot de passe"
+                    />
+                    {unlockError && <p className="login-error">{unlockError}</p>}
+                    <button type="submit" className="button-primary">Déverrouiller</button>
+                </form>
+            </div>
+        );
+    }
+
     return (
-        <div className="ai-tutor-page-container">
+        <div className="page-container ai-tutor-page-container">
             <div className="ai-tutor-page">
-                <div className="ai-tutor-header">
+                 <header className="ai-tutor-header">
                     <h1 className="page-title">Tuteur IA</h1>
-                    <p className="page-subtitle">Discutez avec Kele, votre partenaire de conversation en Faka'uvea.</p>
-                </div>
+                    <p className="page-subtitle">Discutez avec Tali, votre assistant personnel pour apprendre le Faka'uvea.</p>
+                 </header>
                 <div className="chat-window" ref={chatWindowRef}>
                     {messages.map((msg, index) => (
-                        <div key={index} className={`chat-message ${msg.role === 'user' ? 'user-message' : 'ai-message'}`}>
+                        <div key={index} className={`chat-message ${msg.sender}-message`}>
                             <div className="message-avatar">
-                                {msg.role === 'user' ? <UserIcon /> : <RobotIcon />}
+                                {msg.sender === 'user' ? <UserAvatar /> : <AIAvatar />}
                             </div>
                             <div className="message-content">
                                 <p>{msg.text}</p>
                             </div>
                         </div>
                     ))}
-                    {isLoading && messages[messages.length-1]?.role === 'user' && (
-                         <div className="chat-message ai-message">
-                            <div className="message-avatar"><RobotIcon /></div>
-                            <div className="message-content">
+                    {isLoading && (
+                        <div className="chat-message ai-message">
+                             <div className="message-avatar"><AIAvatar /></div>
+                             <div className="message-content">
                                 <div className="loading-indicator">
                                     <span></span><span></span><span></span>
                                 </div>
-                            </div>
+                             </div>
                         </div>
                     )}
                 </div>
-                <form onSubmit={handleSendMessage} className="chat-input-form">
-                    <input
-                        type="text"
-                        className="chat-input"
-                        value={userInput}
-                        onChange={(e) => setUserInput(e.target.value)}
-                        placeholder="Envoyer un message à Kele..."
-                        disabled={isLoading || !chat}
-                        aria-label="Votre message"
-                    />
-                    <button type="submit" className="send-button" disabled={isLoading || !userInput.trim() || !chat} aria-label="Envoyer">
-                        <SendIcon />
-                    </button>
-                </form>
+                <div className="chat-input-area">
+                    <form onSubmit={sendMessage} className="chat-input-form">
+                        <input
+                            type="text"
+                            className="chat-input"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder="Posez votre question à Tali..."
+                            disabled={isLoading}
+                            aria-label="Votre message"
+                        />
+                        <button type="submit" className="send-button" disabled={isLoading || !input.trim()} aria-label="Envoyer" title="Envoyer">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" /></svg>
+                        </button>
+                    </form>
+                    <p className="ai-tutor-disclaimer">Ceci est un outil de conversation expérimental en test. Les informations peuvent être incorrectes.</p>
+                </div>
             </div>
         </div>
     );
 };
-
 
 const FakaUveaInfoPage = () => {
     return (
-        <div className="faka-uvea-info-page">
-            <h1 className="page-title">À propos du Faka'uvea</h1>
-            
+        <div className="page-container faka-uvea-info-page">
+            <h1 className="page-title">La Langue Faka'uvea</h1>
             <section className="info-section">
-                <h2>L'Alphabet (Te 'Alefapeto)</h2>
-                <p>L'alphabet wallisien est un alphabet latin qui comporte 16 lettres.</p>
+                <h2>L'Alphabet (Te 'Alafapeti)</h2>
+                <p>L'alphabet wallisien est simple et phonétique. Il se compose de 16 lettres, dont une consonne spéciale appelée 'gutu' (apostrophe) qui représente un coup de glotte.</p>
                 <div className="alphabet-list">
-                    {ALPHABET_STATUS.map(({ letter }) => <span key={letter} className="alphabet-letter">{letter}</span>)}
+                    {ALPHABET.map(letter => <span key={letter} className="alphabet-letter">{letter}</span>)}
                 </div>
             </section>
-            
-            <section className="info-section">
-                <h2>La Prononciation</h2>
-                <p>La prononciation est assez régulière et phonétique.</p>
+             <section className="info-section">
+                <h2>Guide de Prononciation</h2>
                 <dl className="pronunciation-guide">
-                    <dt>Voyelles</dt>
-                    <dd>Les 5 voyelles <strong>(a, e, i, o, u)</strong> se prononcent comme en espagnol ou en italien : [a], [e], [i], [o], [u]. Elles peuvent être brèves ou longues (notées avec un macron, ex: ā), ce qui peut changer le sens du mot.</dd>
-                    
-                    <dt>Consonne 'g'</dt>
-                    <dd>La lettre <strong>g</strong> se prononce toujours comme le son "ng" dans le mot anglais "singer" ou le mot français "parking". Elle correspond au son nasal vélaire [ŋ].</dd>
-
-                    <dt>Le coup de glotte (fakau'a)</dt>
-                    <dd>Représenté par une apostrophe ' (nommée <em>fakau'a</em>), il marque une brève interruption du son, similaire à la pause au milieu de l'interjection anglaise "uh-oh!". C'est une consonne à part entière.</dd>
+                    <div>
+                        <dt>Voyelles</dt>
+                        <dd>Les voyelles (A, E, I, O, U) se prononcent comme en espagnol ou en italien, et non comme en français. Par exemple, 'U' se prononce "ou".</dd>
+                    </div>
+                     <div>
+                        <dt>Consonnes</dt>
+                        <dd>La plupart des consonnes (F, H, K, L, M, N, S, T, V) se prononcent comme en français. 'G' est une exception, il se prononce toujours "ng" comme dans "parking".</dd>
+                    </div>
+                     <div>
+                        <dt>Le 'Gutu' (')</dt>
+                        <dd>L'apostrophe représente un "coup de glotte", une brève pause ou une coupure de son, similaire au "uh-oh" en anglais. C'est une consonne à part entière.</dd>
+                    </div>
                 </dl>
-            </section>
-
-            <section className="info-section">
-                <h2>Structure de la Phrase</h2>
-                <p>Le Faka'uvea suit majoritairement un ordre <strong>Verbe-Sujet-Objet (VSO)</strong>.</p>
-                <div className="word-example">
-                    <p className="faka-uvea-example">E alu au ki te api.</p>
-                    <p><em>(Verbe: alu - Sujet: au - Objet: ki te api)</em></p>
-                    <p>"Je vais à la maison." (Lit: "Va je à la maison.")</p>
-                </div>
             </section>
         </div>
     );
 };
 
+const GamesPage = () => {
+    type GameTab = 'Memory' | 'Mots Mêlés' | 'Le Pendu' | 'Flashcards' | 'Scrabble';
+    const [activeTab, setActiveTab] = useState<GameTab>('Memory');
+
+    const gameTabs: { id: GameTab, label: string }[] = [
+        { id: 'Memory', label: 'Memory' },
+        { id: 'Scrabble', label: 'Scrabble' },
+        { id: 'Mots Mêlés', label: 'Mots Mêlés' },
+        { id: 'Le Pendu', label: 'Le Pendu' },
+        { id: 'Flashcards', label: 'Flashcards' },
+    ];
+
+    const renderGameContent = () => {
+        switch (activeTab) {
+            case 'Memory':
+                return <MemoryGame />;
+            case 'Scrabble':
+                return <ScrabbleGame />;
+            case 'Mots Mêlés':
+                return <WordSearchGame />;
+            case 'Le Pendu':
+                return <HangmanGame />;
+            case 'Flashcards':
+                return <FlashcardsGame />;
+            default:
+                return null;
+        }
+    }
+
+    return (
+        <div className="page-container">
+            <h1 className="page-title">Jeux Éducatifs</h1>
+            <div className="game-tabs">
+                {gameTabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={activeTab === tab.id ? 'active' : ''}
+                    >
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+            <div className="game-content">
+                {renderGameContent()}
+            </div>
+        </div>
+    );
+};
 
 const MemoryGame = () => {
-    const [cards, setCards] = useState([]);
-    const [flipped, setFlipped] = useState([]);
-    const [matched, setMatched] = useState([]);
+    const { dictionary } = useAppContext();
+    const [cards, setCards] = useState<{type: string; content: string; id: string}[]>([]);
+    const [flipped, setFlipped] = useState<number[]>([]);
+    const [matched, setMatched] = useState<string[]>([]);
     const [moves, setMoves] = useState(0);
 
-    const setupGame = useCallback(() => {
-        const words = [...DICTIONARY_DATA].sort(() => 0.5 - Math.random()).slice(0, 6);
-        const gameCards = words.flatMap((word, i) => [
-            { id: i + '_w', value: word.faka_uvea, pairId: i },
-            { id: i + '_f', value: word.french, pairId: i },
-        ]).sort(() => 0.5 - Math.random());
-        setCards(gameCards);
+    const initializeGame = useCallback(() => {
+        const wordPool = dictionary.filter(entry => entry.meanings.length > 0 && entry.meanings[0].french);
+        const shuffled = wordPool.sort(() => 0.5 - Math.random());
+        const selectedWords = shuffled.slice(0, 8);
+
+        const gameCards = selectedWords.flatMap(word => ([
+            { type: 'word', content: word.faka_uvea, id: word.faka_uvea },
+            { type: 'translation', content: word.meanings[0].french, id: word.faka_uvea }
+        ]));
+
+        setCards(gameCards.sort(() => Math.random() - 0.5));
         setFlipped([]);
         setMatched([]);
         setMoves(0);
-    }, []);
+    }, [dictionary]);
 
     useEffect(() => {
-        setupGame();
-    }, [setupGame]);
+        initializeGame();
+    }, [initializeGame]);
 
-    const handleFlip = (index) => {
-        if (flipped.length === 2 || flipped.includes(index) || matched.includes(cards[index].pairId)) return;
-        const newFlipped = [...flipped, index];
-        setFlipped(newFlipped);
-    
-        if (newFlipped.length === 2) {
+    useEffect(() => {
+        if (flipped.length === 2) {
             setMoves(m => m + 1);
-            const [firstIndex, secondIndex] = newFlipped;
-            if (cards[firstIndex].pairId === cards[secondIndex].pairId) {
-                setMatched(m => [...m, cards[firstIndex].pairId]);
-                setFlipped([]);
-            } else {
-                setTimeout(() => setFlipped([]), 1200);
+            const [first, second] = flipped;
+            if (cards[first].id === cards[second].id) {
+                setMatched(prev => [...prev, cards[first].id]);
             }
+            setTimeout(() => setFlipped([]), 1200);
+        }
+    }, [flipped, cards]);
+
+    const handleCardClick = (index: number) => {
+        if (flipped.length < 2 && !flipped.includes(index) && !matched.includes(cards[index].id)) {
+            setFlipped(prev => [...prev, index]);
         }
     };
     
+    const isWon = matched.length === 8;
+
     return (
-        <div className="memory-game-container">
+        <div>
             <div className="game-controls">
-                <p>Paires trouvées: {matched.length} / 6</p>
-                <p>Mouvements: {moves}</p>
-                <button onClick={setupGame} aria-label="Recommencer la partie"><RestartIcon /></button>
+                <p>Paires trouvées : {matched.length} / 8</p>
+                <p>Coups : {moves}</p>
+                <button onClick={initializeGame} aria-label="Recommencer la partie" title="Recommencer"><RestartIcon/></button>
             </div>
-            {matched.length === 6 && <p className="game-win-message">Félicitations ! Vous avez gagné !</p>}
+            {isWon && <p className="game-win-message">Félicitations ! Vous avez trouvé toutes les paires !</p>}
             <div className="memory-grid">
                 {cards.map((card, index) => (
                     <div
-                        key={card.id}
-                        className={`memory-card ${flipped.includes(index) ? 'flipped' : ''} ${matched.includes(card.pairId) ? 'matched' : ''}`}
-                        onClick={() => handleFlip(index)}
-                        role="button"
-                        aria-pressed={flipped.includes(index)}
+                        key={index}
+                        className={`memory-card ${flipped.includes(index) || matched.includes(card.id) ? 'flipped' : ''} ${matched.includes(card.id) ? 'matched' : ''}`}
+                        onClick={() => handleCardClick(index)}
                     >
                         <div className="card-face card-face-front"></div>
-                        <div className="card-face card-face-back">{card.value}</div>
+                        <div className="card-face card-face-back">{card.content}</div>
                     </div>
                 ))}
             </div>
@@ -994,369 +1552,468 @@ const MemoryGame = () => {
     );
 };
 
-const Flashcards = () => {
-    const [cards, setCards] = useState([]);
+const FlashcardsGame = () => {
+    const { dictionary } = useAppContext();
+    const [deck, setDeck] = useState<DictionaryEntry[]>([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [isFlipped, setIsFlipped] = useState(false);
 
-    const shuffleAndSetCards = useCallback(() => {
-        const shuffled = [...DICTIONARY_DATA].sort(() => 0.5 - Math.random());
-        setCards(shuffled);
+    const shuffleDeck = useCallback(() => {
+        const wordPool = dictionary.filter(entry => entry.meanings.length > 0 && entry.meanings[0].french);
+        const shuffled = wordPool.sort(() => 0.5 - Math.random());
+        setDeck(shuffled);
         setCurrentIndex(0);
         setIsFlipped(false);
-    }, []);
-
+    }, [dictionary]);
+    
     useEffect(() => {
-        shuffleAndSetCards();
-    }, [shuffleAndSetCards]);
-
-    if (cards.length === 0) {
-        return <p>Chargement des flashcards...</p>;
-    }
-
-    const card = cards[currentIndex];
+        if (dictionary.length > 0) {
+            shuffleDeck();
+        }
+    }, [dictionary, shuffleDeck]);
 
     const handleNext = () => {
         setIsFlipped(false);
-        setTimeout(() => setCurrentIndex((i) => (i + 1) % cards.length), 150);
+        setTimeout(() => setCurrentIndex((prev) => (prev + 1) % deck.length), 150);
     };
 
     const handlePrev = () => {
         setIsFlipped(false);
-        setTimeout(() => setCurrentIndex((i) => (i - 1 + cards.length) % cards.length), 150);
+        setTimeout(() => setCurrentIndex((prev) => (prev - 1 + deck.length) % deck.length), 150);
     };
+
+    if (deck.length === 0) return <p>Chargement des flashcards...</p>;
+
+    const currentCard = deck[currentIndex];
 
     return (
         <div className="flashcards-container">
-            <div className="flashcard-deck">
-                <div 
-                    className={`flashcard ${isFlipped ? 'flipped' : ''}`}
-                    onClick={() => setIsFlipped(!isFlipped)}
-                >
-                    <div className="flashcard-face flashcard-face-front">{card.faka_uvea}</div>
-                    <div className="flashcard-face flashcard-face-back">{card.french}</div>
+             <div className="flashcard-deck">
+                <div className={`flashcard ${isFlipped ? 'flipped' : ''}`} onClick={() => setIsFlipped(!isFlipped)}>
+                    <div className="flashcard-face flashcard-face-front">
+                        {currentCard.faka_uvea}
+                        <span className="flashcard-hint">(cliquez pour voir la réponse)</span>
+                    </div>
+                    <div className="flashcard-face flashcard-face-back">
+                        {currentCard.meanings[0].french}
+                    </div>
                 </div>
             </div>
             <div className="flashcard-controls">
                 <button onClick={handlePrev}>Précédent</button>
-                <span>{currentIndex + 1} / {cards.length}</span>
+                <span>{currentIndex + 1} / {deck.length}</span>
                 <button onClick={handleNext}>Suivant</button>
             </div>
-             <button onClick={shuffleAndSetCards} className="shuffle-button"><RestartIcon/> Mélanger</button>
+            <button onClick={shuffleDeck} className="shuffle-button" title="Mélanger les cartes">
+                <RefreshIcon />
+                Mélanger
+            </button>
         </div>
     );
 };
 
-const WordScrambleGame = () => {
+const ScrabbleGame = () => {
+    const { dictionary } = useAppContext();
     const [currentWord, setCurrentWord] = useState<DictionaryEntry | null>(null);
-    const [scrambled, setScrambled] = useState<string[]>([]);
-    const [answer, setAnswer] = useState<string[]>([]);
-    const [feedback, setFeedback] = useState<'correct' | 'incorrect' | ''>('');
-    const [isSolved, setIsSolved] = useState(false);
+    const [scrambled, setScrambled] = useState('');
+    const [userInput, setUserInput] = useState('');
+    const [feedback, setFeedback] = useState('');
 
-    const setupNewWord = useCallback(() => {
-        const wordPool = DICTIONARY_DATA.filter(w => w.faka_uvea.length > 3 && w.faka_uvea.length < 10 && !w.faka_uvea.includes(' '));
-        const word = wordPool[Math.floor(Math.random() * wordPool.length)];
-        setCurrentWord(word);
+    const startNewGame = useCallback(() => {
+        const validWords = dictionary.filter(e => e.faka_uvea.length > 3 && !e.faka_uvea.includes(' ') && e.meanings[0]?.french);
+        if (validWords.length === 0) return;
+
+        const newWord = validWords[Math.floor(Math.random() * validWords.length)];
+        setCurrentWord(newWord);
         
-        let shuffledLetters = word.faka_uvea.split('').sort(() => Math.random() - 0.5);
-        // Ensure it's not the same as the original word
-        while (shuffledLetters.join('') === word.faka_uvea) {
-            shuffledLetters = word.faka_uvea.split('').sort(() => Math.random() - 0.5);
-        }
+        const wordLetters = newWord.faka_uvea.split('');
+        let shuffled;
+        do {
+            shuffled = [...wordLetters].sort(() => 0.5 - Math.random()).join('');
+        } while (shuffled === newWord.faka_uvea); // Ensure it's actually scrambled
         
-        setScrambled(shuffledLetters);
-        setAnswer([]);
+        setScrambled(shuffled.toUpperCase());
+        setUserInput('');
         setFeedback('');
-        setIsSolved(false);
-    }, []);
+    }, [dictionary]);
 
     useEffect(() => {
-        setupNewWord();
-    }, [setupNewWord]);
-
-    const handleLetterClick = (letter, index) => {
-        setAnswer([...answer, letter]);
-        const newScrambled = [...scrambled];
-        newScrambled.splice(index, 1);
-        setScrambled(newScrambled);
-    };
-
-    const handleAnswerLetterClick = (letter, index) => {
-        setScrambled([...scrambled, letter]);
-        const newAnswer = [...answer];
-        newAnswer.splice(index, 1);
-        setAnswer(newAnswer);
-    };
-
-    useEffect(() => {
-        if (currentWord && answer.length === currentWord.faka_uvea.length) {
-            const isCorrect = answer.join('') === currentWord.faka_uvea;
-            setFeedback(isCorrect ? 'correct' : 'incorrect');
-            if (isCorrect) {
-                setIsSolved(true);
-            }
-        } else {
-            setFeedback('');
+        if (dictionary.length > 0) {
+            startNewGame();
         }
-    }, [answer, currentWord]);
+    }, [dictionary, startNewGame]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (userInput.toLowerCase() === currentWord.faka_uvea.toLowerCase()) {
+            setFeedback('correct');
+        } else {
+            setFeedback('incorrect');
+            setTimeout(() => setFeedback(''), 1500);
+        }
+    };
     
-    if (!currentWord) return <div>Chargement du jeu...</div>;
+    if (!currentWord) return <p>Chargement du jeu...</p>;
 
     return (
-        <div className="word-scramble-game">
-            <div className="scramble-clue">
-                {currentWord.image_url && <img src={currentWord.image_url} alt="Indice visuel" className="scramble-image"/>}
-                <p className="scramble-translation">Traduction : <strong>{currentWord.french}</strong></p>
+        <div className="scrabble-game-container">
+            <p className="scrabble-hint"><strong>Indice :</strong> {currentWord.meanings[0].french}</p>
+            <div className="scrambled-letters">
+                {scrambled.split('').map((letter, index) => <span key={index}>{letter}</span>)}
             </div>
-            
-            <div className={`scramble-answer-area ${feedback}`}>
-                {answer.map((letter, index) => (
-                    <button key={index} className="scramble-tile in-answer" onClick={() => handleAnswerLetterClick(letter, index)}>
-                        {letter}
-                    </button>
-                ))}
-                {Array(currentWord.faka_uvea.length - answer.length).fill(0).map((_, index) => (
-                    <div key={index} className="scramble-slot" />
-                ))}
-            </div>
-
-            <div className="scramble-letters">
-                {scrambled.map((letter, index) => (
-                    <button key={index} className="scramble-tile" onClick={() => handleLetterClick(letter, index)} disabled={isSolved}>
-                        {letter}
-                    </button>
-                ))}
-            </div>
-            
-            {isSolved && (
-                 <div className="scramble-feedback correct">
-                    <p>Bravo ! C'était bien "{currentWord.faka_uvea}".</p>
+            <form onSubmit={handleSubmit} className="scrabble-form">
+                <input
+                    type="text"
+                    value={userInput}
+                    onChange={(e) => setUserInput(e.target.value)}
+                    className={`scrabble-input ${feedback}`}
+                    placeholder="Écrivez le mot ici"
+                    aria-label="Votre réponse"
+                />
+                <button type="submit" className="button-primary">Vérifier</button>
+            </form>
+            {feedback === 'correct' && (
+                <div className="scrabble-feedback correct">
+                    <p className="game-win-message">Félicitations !</p>
+                    <button className="button-secondary" onClick={startNewGame}>Mot suivant</button>
                 </div>
             )}
-            
-            <div className="scramble-controls">
-                <button onClick={setupNewWord} className="button-primary">
-                    <ShuffleIcon /> Mot suivant
-                </button>
-            </div>
         </div>
     );
 };
 
 
-const GamesPage = () => {
-    const [activeTab, setActiveTab] = useState('Memory');
-    return (
-        <>
-            <h1 className="page-title">Jeux Ludiques</h1>
-            <div className="game-tabs">
-                <button onClick={() => setActiveTab('Memory')} className={activeTab === 'Memory' ? 'active' : ''}>Jeu de Mémoire</button>
-                <button onClick={() => setActiveTab('Flashcards')} className={activeTab === 'Flashcards' ? 'active' : ''}>Flashcards</button>
-                <button onClick={() => setActiveTab('Mots Mêlés')} className={activeTab === 'Mots Mêlés' ? 'active' : ''}>Mots Mêlés</button>
-            </div>
-            <div className="game-content">
-                {activeTab === 'Memory' && <MemoryGame />}
-                {activeTab === 'Flashcards' && <Flashcards />}
-                {activeTab === 'Mots Mêlés' && <WordScrambleGame />}
-            </div>
-        </>
-    );
-};
+const WordSearchGame = () => {
+    const { dictionary } = useAppContext();
+    const GRID_SIZE = 12;
+    const NUM_WORDS = 6;
 
-const Quiz = ({ questions, duration, onComplete }) => {
-    const [currentQ, setCurrentQ] = useState(0);
-    const [selectedAnswer, setSelectedAnswer] = useState(null);
-    const [score, setScore] = useState(0);
-    const [timeLeft, setTimeLeft] = useState(duration * 60);
+    type GridCell = { char: string | null; wordRef: string | null };
+    type Position = { r: number; c: number };
 
-    const question = questions[currentQ];
-    
-    const handleQuizEnd = useCallback((finalScore) => {
-        onComplete(finalScore);
-    }, [onComplete]);
+    const [grid, setGrid] = useState<GridCell[][]>([]);
+    const [words, setWords] = useState<string[]>([]);
+    const [foundWords, setFoundWords] = useState<string[]>([]);
+    const [selection, setSelection] = useState<Position[]>([]);
+    const isSelecting = useRef(false);
 
-    useEffect(() => {
-        if (timeLeft <= 0) {
-            handleQuizEnd(score);
+    const generateNewGame = useCallback(() => {
+        const wordPool = dictionary.filter(w => w.faka_uvea.length <= GRID_SIZE && w.faka_uvea.length > 2 && !w.faka_uvea.includes(' '));
+        if (wordPool.length < NUM_WORDS) {
+            console.error("Not enough words in dictionary to start game.");
             return;
         }
-        const timerId = setInterval(() => {
-            setTimeLeft(t => t - 1);
-        }, 1000);
-        return () => clearInterval(timerId);
-    }, [timeLeft, score, handleQuizEnd]);
 
-    const handleAnswer = (option) => {
-        setSelectedAnswer(option);
-        const isCorrect = option === question.correctAnswer;
-        const newScore = isCorrect ? score + 1 : score;
-        if(isCorrect) setScore(newScore);
+        const shuffledWords = [...wordPool].sort(() => 0.5 - Math.random());
+        const wordsToPlace = shuffledWords.slice(0, NUM_WORDS).map(w => w.faka_uvea.toUpperCase());
+        
+        const newGrid: GridCell[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill({ char: null, wordRef: null }));
+        const placedWords: string[] = [];
+        
+        const directions = [ { r: 0, c: 1 }, { r: 1, c: 0 }, { r: 1, c: 1 } ];
 
-        setTimeout(() => {
-            if (currentQ < questions.length - 1) {
-                setCurrentQ(q => q + 1);
-                setSelectedAnswer(null);
-            } else {
-                handleQuizEnd(newScore);
+        for (const word of wordsToPlace) {
+            let placed = false;
+            for (let i = 0; i < 100 && !placed; i++) {
+                const dir = directions[Math.floor(Math.random() * directions.length)];
+                const startRow = Math.floor(Math.random() * GRID_SIZE);
+                const startCol = Math.floor(Math.random() * GRID_SIZE);
+
+                let canPlace = true;
+                const cellsToPlace: { r: number; c: number; char: string }[] = [];
+                for (let j = 0; j < word.length; j++) {
+                    const r = startRow + j * dir.r;
+                    const c = startCol + j * dir.c;
+                    if (r >= GRID_SIZE || c >= GRID_SIZE || (newGrid[r][c].char && newGrid[r][c].char !== word[j])) {
+                        canPlace = false;
+                        break;
+                    }
+                    cellsToPlace.push({ r, c, char: word[j] });
+                }
+
+                if (canPlace) {
+                    cellsToPlace.forEach(({ r, c, char }) => { newGrid[r][c] = { char, wordRef: word }; });
+                    placedWords.push(word);
+                    placed = true;
+                }
             }
-        }, 1200);
+        }
+        
+        for (let r = 0; r < GRID_SIZE; r++) {
+            for (let c = 0; c < GRID_SIZE; c++) {
+                if (!newGrid[r][c].char) {
+                    newGrid[r][c] = { char: ALPHABET[Math.floor(Math.random() * ALPHABET.length)], wordRef: null };
+                }
+            }
+        }
+
+        setGrid(newGrid);
+        setWords(placedWords);
+        setFoundWords([]);
+        setSelection([]);
+    }, [dictionary]);
+
+    useEffect(() => {
+        if (dictionary.length > 0) {
+            generateNewGame();
+        }
+    }, [dictionary, generateNewGame]);
+
+    const getSelectedWord = (currentSelection: Position[]) => {
+        if (currentSelection.length < 2) return "";
+        return currentSelection.map(pos => grid[pos.r][pos.c].char).join('');
+    };
+
+    const handleMouseDown = (r: number, c: number) => {
+        isSelecting.current = true;
+        setSelection([{ r, c }]);
     };
     
-    const formatTime = (seconds) => {
-        const minutes = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
+    const handleMouseEnter = (r: number, c: number) => {
+        if (!isSelecting.current || selection.length === 0) return;
+        const start = selection[0];
+        const newSelection: Position[] = [];
+        const dr = Math.sign(r - start.r);
+        const dc = Math.sign(c - start.c);
+
+        if (Math.abs(r - start.r) === Math.abs(c - start.c) || r === start.r || c === start.c) {
+            let currR = start.r;
+            let currC = start.c;
+            while(true) {
+                newSelection.push({ r: currR, c: currC });
+                if (currR === r && currC === c) break;
+                currR += dr;
+                currC += dc;
+            }
+            setSelection(newSelection);
+        }
+    };
+    
+    const handleMouseUp = () => {
+        isSelecting.current = false;
+        const selectedWord = getSelectedWord(selection);
+        const reversedSelectedWord = selectedWord.split('').reverse().join('');
+        
+        if (words.includes(selectedWord) && !foundWords.includes(selectedWord)) {
+            setFoundWords(prev => [...prev, selectedWord]);
+        } else if (words.includes(reversedSelectedWord) && !foundWords.includes(reversedSelectedWord)) {
+            setFoundWords(prev => [...prev, reversedSelectedWord]);
+        }
+        setSelection([]);
+    };
+    
+    const isCellInSelection = (r: number, c: number) => selection.some(pos => pos.r === r && pos.c === c);
+    const isCellInFoundWord = (r: number, c: number) => {
+        const cell = grid[r]?.[c];
+        return cell && cell.wordRef && foundWords.includes(cell.wordRef);
     };
 
+    const isWon = words.length > 0 && foundWords.length === words.length;
+
     return (
-        <div className="quiz-container">
-            <div className="quiz-header">
-                <p className="quiz-progress">Question {currentQ + 1} / {questions.length}</p>
-                <div className="quiz-timer">{formatTime(timeLeft)}</div>
+        <div className="word-search-container" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+            <div className="word-search-sidebar">
+                <h3>Mots à trouver</h3>
+                <ul className="word-search-list">
+                    {words.map(word => (
+                        <li key={word} className={foundWords.includes(word) ? 'found' : ''}>
+                            {word}
+                        </li>
+                    ))}
+                </ul>
+                <button className="button-secondary" onClick={generateNewGame}>
+                    <RestartIcon/>
+                    Nouvelle Partie
+                </button>
+                 {isWon && <p className="game-win-message">Félicitations !</p>}
             </div>
-            <p className="quiz-question">Quelle est la traduction de <strong>"{question.word}"</strong> ?</p>
-            <div className="quiz-options">
-                {question.options.map(option => (
-                    <button 
-                        key={option} 
-                        className={`quiz-option ${selectedAnswer === option ? (option === question.correctAnswer ? 'correct' : 'incorrect') : ''}`}
-                        onClick={() => handleAnswer(option)}
-                        disabled={selectedAnswer !== null}
-                    >
-                        {option}
-                    </button>
-                ))}
+            <div className="word-search-grid">
+                {grid.map((row, r) =>
+                    row.map((cell, c) => (
+                        <div
+                            key={`${r}-${c}`}
+                            className={`word-search-cell ${isCellInSelection(r, c) ? 'selected' : ''} ${isCellInFoundWord(r, c) ? 'found' : ''}`}
+                            onMouseDown={() => handleMouseDown(r, c)}
+                            onMouseEnter={() => handleMouseEnter(r, c)}
+                        >
+                            {cell.char}
+                        </div>
+                    ))
+                )}
             </div>
         </div>
     );
 };
 
-const Diploma = ({ score, total, userName, level, onRestart }) => {
-    const date = new Date().toLocaleDateString('fr-FR');
+const HangmanGame = () => {
+    const { dictionary } = useAppContext();
+    const [word, setWord] = useState('');
+    const [hint, setHint] = useState('');
+    const [guessedLetters, setGuessedLetters] = useState(new Set<string>());
+    const [wrongGuesses, setWrongGuesses] = useState(0);
+
+    const normalize = (str: string) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+
+    const startNewGame = useCallback(() => {
+        const validWords = dictionary.filter(e => e.faka_uvea.length > 3 && !e.faka_uvea.includes(' '));
+        if (validWords.length === 0) return;
+        const newEntry = validWords[Math.floor(Math.random() * validWords.length)];
+        setWord(normalize(newEntry.faka_uvea));
+        setHint(newEntry.meanings[0].french);
+        setGuessedLetters(new Set());
+        setWrongGuesses(0);
+    }, [dictionary]);
+    
+    useEffect(startNewGame, [startNewGame]);
+
+    const handleGuess = (letter: string) => {
+        const normalizedLetter = normalize(letter);
+        if (guessedLetters.has(normalizedLetter) || isGameOver) return;
+        
+        setGuessedLetters(prev => new Set(prev).add(normalizedLetter));
+        if (!word.includes(normalizedLetter)) {
+            setWrongGuesses(prev => prev + 1);
+        }
+    };
+    
+    const displayWord = word.split('').map(letter => (
+        guessedLetters.has(letter) || letter === '\'' ? letter : '_'
+    )).join(' ');
+
+    const isWon = word && word.split('').every(letter => guessedLetters.has(letter) || letter === '\'');
+    const isLost = wrongGuesses >= 6;
+    const isGameOver = isWon || isLost;
+
+    const HangmanDrawing = ({ errors }: { errors: number }) => (
+        <svg className="hangman-drawing" viewBox="0 0 100 120">
+            <line x1="10" y1="115" x2="90" y2="115" stroke="currentColor" strokeWidth="4" />
+            <line x1="30" y1="115" x2="30" y2="10" stroke="currentColor" strokeWidth="4" />
+            <line x1="30" y1="10" x2="70" y2="10" stroke="currentColor" strokeWidth="4" />
+            <line x1="70" y1="10" x2="70" y2="25" stroke="currentColor" strokeWidth="3" />
+            {errors > 0 && <circle cx="70" cy="35" r="10" stroke="currentColor" strokeWidth="3" fill="none" />}
+            {errors > 1 && <line x1="70" y1="45" x2="70" y2="80" stroke="currentColor" strokeWidth="3" />}
+            {errors > 2 && <line x1="70" y1="55" x2="55" y2="70" stroke="currentColor" strokeWidth="3" />}
+            {errors > 3 && <line x1="70" y1="55" x2="85" y2="70" stroke="currentColor" strokeWidth="3" />}
+            {errors > 4 && <line x1="70" y1="80" x2="55" y2="100" stroke="currentColor" strokeWidth="3" />}
+            {errors > 5 && <line x1="70" y1="80" x2="85" y2="100" stroke="currentColor" strokeWidth="3" />}
+        </svg>
+    );
+
     return (
-        <div className="diploma-wrapper">
-             <div className="diploma-container" style={{'--diploma-color': level.color} as React.CSSProperties}>
-                <div className="diploma-header">
-                    <h2>Certificat de Réussite</h2>
-                    <p style={{ color: level.color, fontWeight: 'bold' }}>Niveau {level.name}</p>
-                </div>
-                <div className="diploma-body">
-                    <p>Ce certificat est fièrement présenté à</p>
-                    <h3 className="recipient-name">{userName || "Nom de l'Apprenant"}</h3>
-                    <p>pour avoir brillamment réussi le test de certification avec un score de</p>
-                    <p><strong>{score} / {total}</strong></p>
-                </div>
-                <div className="diploma-footer">
-                    <span>Fait le, {date}</span>
-                    <span>Dictionnaire Faka'uvea</span>
-                </div>
+        <div className="hangman-container">
+            <div className="hangman-drawing-area">
+                <HangmanDrawing errors={wrongGuesses} />
             </div>
-            <div className="diploma-actions">
-                <button className="button-primary" onClick={() => window.print()}>Imprimer le certificat</button>
-                <button className="button-primary" onClick={onRestart}>Retour</button>
+            <div className="hangman-game-area">
+                <p className="hangman-hint">Indice : {hint}</p>
+                <p className="hangman-word">{displayWord}</p>
+                {isGameOver ? (
+                    <div className="hangman-game-over">
+                        {isWon ? <p className="game-win-message">Félicitations, vous avez trouvé !</p> : <p className="game-lose-message">Dommage... Le mot était : {word}</p>}
+                        <button className="button-primary" onClick={startNewGame}>Rejouer</button>
+                    </div>
+                ) : (
+                    <div className="hangman-keyboard">
+                        {ALPHABET.map(letter => (
+                            <button 
+                                key={letter}
+                                onClick={() => handleGuess(letter)}
+                                disabled={guessedLetters.has(normalize(letter))}
+                            >
+                                {letter}
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );
-}
+};
 
-const CertificationPage = () => {
-    const [quizState, setQuizState] = useState('selection'); // selection, playing, finished
-    const [userName, setUserName] = useState('');
-    const [score, setScore] = useState(0);
+
+const ExamsPage = () => {
+    const { dictionary } = useAppContext();
+    const { user } = useAuth();
+    const [highScores, setHighScores] = useLocalStorage<Record<string, number>>('highScores', {});
+    const [showDiploma, setShowDiploma] = useState<{score: number; level: ExamLevel} | null>(null);
+    const [username, setUsername] = useState(user?.username || "");
+    const [startExam, setStartExam] = useState(false);
     const [selectedLevel, setSelectedLevel] = useState<ExamLevel | null>(null);
-    const [questions, setQuestions] = useState([]);
-    const [highScores, setHighScores] = useState(() => {
-        try {
-            const scores = localStorage.getItem('faka-uvea-highscores');
-            return scores ? JSON.parse(scores) : { Bronze: 0, Argent: 0, Or: 0 };
-        } catch (e) {
-            return { Bronze: 0, Argent: 0, Or: 0 };
-        }
-    });
 
-    const startQuiz = (level: ExamLevel) => {
-        const q = [...DICTIONARY_DATA].sort(() => 0.5 - Math.random()).slice(0, level.questionCount).map(word => {
-            const others = DICTIONARY_DATA.filter(o => o.faka_uvea !== word.faka_uvea).sort(() => 0.5 - Math.random()).slice(0, 3);
-            const options = [word.french, ...others.map(o => o.french)].sort(() => 0.5 - Math.random());
-            return {
-                word: word.faka_uvea,
-                options,
-                correctAnswer: word.french
-            }
-        });
-        setQuestions(q);
+    const handleStartExam = (level: ExamLevel) => {
+        if(username.trim() === "") {
+            alert("Veuillez entrer votre nom pour commencer l'examen.");
+            return;
+        }
         setSelectedLevel(level);
-        setQuizState('playing');
+        setStartExam(true);
     };
-    
-    const handleQuizComplete = (finalScore) => {
-        setScore(finalScore);
-        if (finalScore > highScores[selectedLevel.name]) {
-            const newHighScores = { ...highScores, [selectedLevel.name]: finalScore };
-            setHighScores(newHighScores);
-            localStorage.setItem('faka-uvea-highscores', JSON.stringify(newHighScores));
+
+    const handleExamFinish = (score: number, level: ExamLevel) => {
+        const oldHighScore = highScores[level.name] || 0;
+        if (score > oldHighScore) {
+            setHighScores(prev => ({ ...prev, [level.name]: score }));
         }
-        setQuizState('finished');
-    };
-
-    const handleRestart = () => {
-        setQuizState('selection');
-        setScore(0);
-        setSelectedLevel(null);
-    }
-    
-    if (quizState === 'playing') {
-        return <Quiz questions={questions} duration={selectedLevel.duration} onComplete={handleQuizComplete} />;
-    }
-
-    if (quizState === 'finished') {
-        const passingScore = Math.ceil(selectedLevel.questionCount * (selectedLevel.passingPercent / 100));
+        const passingScore = Math.floor(level.questionCount * (level.passingPercent / 100));
         if (score >= passingScore) {
-            return <Diploma score={score} total={questions.length} userName={userName} level={selectedLevel} onRestart={handleRestart}/>;
+            setShowDiploma({ score, level });
         } else {
-            return (
-                <div className="certification-container">
-                    <h3>Dommage !</h3>
-                    <p>Votre score de {score}/{questions.length} n'est pas suffisant pour obtenir le certificat {selectedLevel.name} (score requis : {passingScore}).</p>
-                    <p>N'hésitez pas à revoir le dictionnaire et à réessayer !</p>
-                    <button className="button-primary" onClick={handleRestart}>Réessayer</button>
-                </div>
-            );
+             alert(`Examen terminé. Votre score est de ${score}/${level.questionCount}. Il faut ${passingScore} bonnes réponses pour réussir. Essayez encore !`);
         }
+        setStartExam(false);
+    };
+
+    if (startExam) {
+        return <Quiz level={selectedLevel} dictionary={dictionary} onFinish={handleExamFinish} />;
     }
+
+    if (showDiploma) {
+        return <Diploma data={showDiploma} username={username} onBack={() => { setShowDiploma(null); setSelectedLevel(null); }} />;
+    }
+    
+    const isLevelUnlocked = (levelName: string) => {
+        if(levelName === 'Bronze') return true;
+        if(levelName === 'Argent') return (highScores['Bronze'] || 0) >= EXAM_LEVELS[0].questionCount * (EXAM_LEVELS[0].passingPercent/100);
+        if(levelName === 'Or') return (highScores['Argent'] || 0) >= EXAM_LEVELS[1].questionCount * (EXAM_LEVELS[1].passingPercent/100);
+        return false;
+    }
+
 
     return (
-        <div className="exam-center-container">
-            <div className="exam-center-header">
-                <TrophyIcon />
-                <h1 className="page-title">Centre de Examen</h1>
-                <p>Choisissez votre niveau d'examen pour obtenir un certificat.</p>
-                <input 
-                    type="text" 
-                    placeholder="Entrez votre nom pour le certificat" 
-                    className="input-field" 
-                    value={userName} 
-                    onChange={e => setUserName(e.target.value)}
+        <div className="page-container exam-center-container">
+            <header className="exam-center-header">
+                 <TrophyIcon width={48} height={48} />
+                <h1 className="page-title">Centre d'Examens</h1>
+                <p>Choisissez votre niveau d'examen pour obtenir votre diplôme.</p>
+                 <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="Entrez votre nom pour le diplôme"
+                    className="input-field"
+                    readOnly={!!user?.username}
                 />
-            </div>
+            </header>
             <div className="exam-selection-grid">
                 {EXAM_LEVELS.map(level => {
-                     const passingScore = Math.ceil(level.questionCount * (level.passingPercent / 100));
-                     const isUnlocked = level.name === 'Bronze' || (level.name === 'Argent' && highScores.Bronze >= Math.ceil(EXAM_LEVELS[0].questionCount * (EXAM_LEVELS[0].passingPercent / 100))) || (level.name === 'Or' && highScores.Argent >= Math.ceil(EXAM_LEVELS[1].questionCount * (EXAM_LEVELS[1].passingPercent / 100)));
-                     return (
-                        <div key={level.name} className={`exam-card exam-card-${level.name.toLowerCase()}`} style={{'--level-color': level.color} as React.CSSProperties}>
+                    const unlocked = isLevelUnlocked(level.name);
+                    return (
+                        <div key={level.name} className="exam-card" style={{'--level-color': level.color} as React.CSSProperties}>
                             <div className="exam-card-icon">
-                                <TrophyIcon />
+                               <TrophyIcon width={32} height={32} />
                             </div>
-                            <h3>Certificat {level.name}</h3>
-                            <span className="exam-details">{level.questionCount} questions • {level.duration} min</span>
-                            <p><strong>{level.passingPercent}% requis pour réussir</strong> ({passingScore} bonnes réponses)</p>
-                            <span className="exam-highscore">Meilleur score : {highScores[level.name] || 0} / {level.questionCount}</span>
-                            <button className="button-primary" onClick={() => startQuiz(level)} disabled={!userName || !isUnlocked}>
-                                {isUnlocked ? "Commencer l'examen" : "Verrouillé"}
+                            <h3>Diplôme {level.name}</h3>
+                            <p>{level.questionCount} questions</p>
+                            <span className="exam-details">Score min: {level.passingPercent}% | Durée: {level.duration} min</span>
+                             <span className="exam-highscore">Meilleur score: {highScores[level.name] || 0}/{level.questionCount}</span>
+                            <button
+                                className="button-primary"
+                                onClick={() => handleStartExam(level)}
+                                disabled={!unlocked || username.trim() === ""}
+                            >
+                                Commencer
                             </button>
-                             {!isUnlocked && <span className="unlock-info">Réussissez le niveau précédent pour débloquer.</span>}
+                            {!unlocked && <p className="unlock-info">Réussissez le niveau précédent pour débloquer.</p>}
                         </div>
                     );
                 })}
@@ -1365,226 +2022,138 @@ const CertificationPage = () => {
     );
 };
 
-const GestionModal = ({ isOpen, onClose, onSave, word }) => {
-    const [formData, setFormData] = useState({ faka_uvea: '', french: '', type: '', phonetic: '', audio_url: '', image_url: '' });
-    const [examples, setExamples] = useState([{ faka_uvea: '', french: '' }]);
-    const [audioFile, setAudioFile] = useState<File | null>(null);
-    const [imageFile, setImageFile] = useState<File | null>(null);
-    const [imagePreview, setImagePreview] = useState<string | null>(null);
-    const modalRef = useRef<HTMLDivElement>(null);
-    const firstInputRef = useRef<HTMLInputElement>(null);
-    const triggerRef = useRef<HTMLElement | null>(null);
+type QuizQuestion = {
+    question: string;
+    options: string[];
+    answer: string;
+};
+
+const Quiz = ({ level, dictionary, onFinish }: { level: ExamLevel, dictionary: DictionaryEntry[], onFinish: (score: number, level: ExamLevel) => void}) => {
+    const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+    const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+    const [score, setScore] = useState(0);
+    const [timeLeft, setTimeLeft] = useState(level.duration * 60);
+    const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+    const [isAnswered, setIsAnswered] = useState(false);
 
     useEffect(() => {
-        if (isOpen) {
-            triggerRef.current = document.activeElement as HTMLElement;
-            firstInputRef.current?.focus();
+        const generatedQuestions: QuizQuestion[] = [];
+        const wordPool = [...dictionary].sort(() => 0.5 - Math.random());
+
+        for (let i = 0; i < level.questionCount; i++) {
+            const questionWord = wordPool[i];
+            const correctAnswer = questionWord.meanings[0].french;
             
-            const handleKeyDown = (e: KeyboardEvent) => {
-                if (e.key === 'Escape') onClose();
-                if (e.key === 'Tab' && modalRef.current) {
-                    const focusableElements = Array.from(modalRef.current.querySelectorAll(
-                        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-                    )) as HTMLElement[];
-                    const firstElement = focusableElements[0];
-                    const lastElement = focusableElements[focusableElements.length - 1];
+            let incorrectOptions = wordPool
+                .filter(w => w.faka_uvea !== questionWord.faka_uvea)
+                .slice(0, 3)
+                .map(w => w.meanings[0].french);
+                
+            const options = [correctAnswer, ...incorrectOptions].sort(() => 0.5 - Math.random());
 
-                    if (e.shiftKey) { // Shift+Tab
-                        if (document.activeElement === firstElement) {
-                            lastElement.focus();
-                            e.preventDefault();
-                        }
-                    } else { // Tab
-                        if (document.activeElement === lastElement) {
-                            firstElement.focus();
-                            e.preventDefault();
-                        }
-                    }
-                }
-            };
-
-            document.addEventListener('keydown', handleKeyDown);
-            return () => {
-                document.removeEventListener('keydown', handleKeyDown);
-                triggerRef.current?.focus();
-            };
+            generatedQuestions.push({
+                question: questionWord.faka_uvea,
+                options: options,
+                answer: correctAnswer
+            });
         }
-    }, [isOpen, onClose]);
-
+        setQuestions(generatedQuestions);
+    }, [level, dictionary]);
 
     useEffect(() => {
-        if (word) {
-            setFormData({
-                faka_uvea: word.faka_uvea,
-                french: word.french,
-                type: word.type,
-                phonetic: word.phonetic || '',
-                audio_url: word.audio_url || '',
-                image_url: word.image_url || '',
-            });
-            setExamples(word.examples.length > 0 ? JSON.parse(JSON.stringify(word.examples)) : [{ faka_uvea: '', french: '' }]);
-            setImagePreview(word.image_url || null);
-        } else {
-            setFormData({ faka_uvea: '', french: '', type: '', phonetic: '', audio_url: '', image_url: '' });
-            setExamples([{ faka_uvea: '', french: '' }]);
-            setImagePreview(null);
+        if (timeLeft <= 0) {
+            onFinish(score, level);
+            return;
         }
-        setAudioFile(null);
-        setImageFile(null);
-    }, [word, isOpen]);
+        const timer = setInterval(() => {
+            setTimeLeft(prev => prev - 1);
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [timeLeft, onFinish, score, level]);
 
-    if (!isOpen) return null;
-
-    const handleChange = (e) => {
-        const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
-    };
-
-    const handleExampleChange = (index, field, value) => {
-        const newExamples = [...examples];
-        newExamples[index][field] = value;
-        setExamples(newExamples);
-    };
-
-    const addExample = () => {
-        setExamples([...examples, { faka_uvea: '', french: '' }]);
-    };
-
-    const removeExample = (index) => {
-        if (examples.length > 1) {
-            setExamples(examples.filter((_, i) => i !== index));
-        } else {
-            setExamples([{ faka_uvea: '', french: '' }]);
+    const handleAnswer = (option: string) => {
+        if (isAnswered) return;
+        setIsAnswered(true);
+        setSelectedAnswer(option);
+        
+        let currentScore = score;
+        if (option === questions[currentQuestionIndex].answer) {
+            currentScore = score + 1;
+            setScore(currentScore);
         }
+
+        setTimeout(() => {
+            if (currentQuestionIndex < questions.length - 1) {
+                setCurrentQuestionIndex(prev => prev + 1);
+                setIsAnswered(false);
+                setSelectedAnswer(null);
+            } else {
+                onFinish(currentScore, level);
+            }
+        }, 1500);
     };
 
-    const handleAudioFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            setAudioFile(file);
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setFormData(prev => ({ ...prev, audio_url: reader.result as string }));
-            };
-            reader.readAsDataURL(file);
-        }
-    };
+    if (questions.length === 0) return <p>Génération du quiz...</p>;
 
-    const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            setImageFile(file);
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const result = reader.result as string;
-                setImagePreview(result);
-                setFormData(prev => ({ ...prev, image_url: result }));
-            };
-            reader.readAsDataURL(file);
-        }
-    };
+    const currentQuestion = questions[currentQuestionIndex];
+    const minutes = Math.floor(timeLeft / 60);
+    const seconds = timeLeft % 60;
 
+    return (
+        <div className="quiz-container">
+            <div className="quiz-header">
+                <h3>{level.name} - Question {currentQuestionIndex + 1}/{questions.length}</h3>
+                <div className="quiz-timer">{String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}</div>
+            </div>
+            <p className="quiz-question">Que signifie le mot <strong>"{currentQuestion.question}"</strong> ?</p>
+            <div className="quiz-options">
+                {currentQuestion.options.map((option, index) => (
+                    <button
+                        key={index}
+                        onClick={() => handleAnswer(option)}
+                        disabled={isAnswered}
+                        className={`quiz-option ${isAnswered && (option === currentQuestion.answer ? 'correct' : (option === selectedAnswer ? 'incorrect' : ''))}`}
+                    >
+                        {option}
+                    </button>
+                ))}
+            </div>
+            <div className="quiz-progress">Score: {score}</div>
+        </div>
+    );
+};
 
-    const previewAudio = () => {
-        if (formData.audio_url) {
-            const audio = new Audio(formData.audio_url);
-            audio.play().catch(e => console.error("Error playing preview audio:", e));
-        }
-    };
+const Diploma = ({ data, username, onBack }: { data: { score: number, level: ExamLevel }, username: string, onBack: () => void }) => {
+    const { level, score } = data;
 
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        // V2-TODO: This object structure is ready for the database.
-        // Gemini CLI will use this to map to the dico_faka.db columns.
-        const finalData = {
-            ...formData,
-            examples: examples.filter(ex => ex.faka_uvea.trim() !== '' && ex.french.trim() !== '')
-        };
-        onSave(finalData);
+    const printDiploma = () => {
+        window.print();
     };
 
     return (
-        <div className="modal-overlay">
-            <div className="modal-content" ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-                <div className="modal-header">
-                    <h2 id="modal-title">{word ? 'Modifier le mot' : 'Ajouter un mot'}</h2>
-                    <button className="close-button" onClick={onClose} aria-label="Fermer"><CloseIcon /></button>
+        <div className="page-container diploma-wrapper">
+             <div className="diploma-container" style={{'--diploma-color': level.color} as React.CSSProperties}>
+                <header className="diploma-header">
+                    <h2>Diplôme de Faka'uvea</h2>
+                    <p>Niveau {level.name}</p>
+                </header>
+                <div className="diploma-body">
+                    <p>Ce diplôme est fièrement décerné à</p>
+                    <h3 className="recipient-name">{username}</h3>
+                    <p>
+                        pour avoir réussi l'examen de niveau {level.name} avec un score de {score}/{level.questionCount}
+                        <br/>
+                        le {new Date().toLocaleDateString('fr-FR')}.
+                    </p>
                 </div>
-                <form onSubmit={handleSubmit} className="modal-form">
-                    <div className="form-group">
-                        <label>Faka'uvea</label>
-                        <input type="text" name="faka_uvea" value={formData.faka_uvea} onChange={handleChange} required ref={firstInputRef} />
-                    </div>
-                    <div className="form-group">
-                        <label>Français</label>
-                        <input type="text" name="french" value={formData.french} onChange={handleChange} required />
-                    </div>
-                    <div className="form-group">
-                        <label>Type</label>
-                        <input type="text" name="type" value={formData.type} onChange={handleChange} required />
-                    </div>
-                    <div className="form-group">
-                        <label>Phonétique</label>
-                        <input type="text" name="phonetic" value={formData.phonetic} onChange={handleChange} />
-                    </div>
-                    <div className="form-group">
-                        <label htmlFor="image-upload">Image (Optionnel)</label>
-                        <div className="image-upload-control">
-                            {imagePreview && <img src={imagePreview} alt="Aperçu de l'image" className="image-preview" />}
-                             <input 
-                                type="file" 
-                                id="image-upload"
-                                accept="image/png, image/jpeg, image/webp, image/svg+xml"
-                                onChange={handleImageFileChange}
-                                className="visually-hidden"
-                            />
-                            <label htmlFor="image-upload" className="button-secondary image-upload-label">
-                                {imagePreview ? 'Changer...' : 'Choisir une image...'}
-                            </label>
-                            <span className="image-file-name">{imageFile?.name || (formData.image_url && !imageFile ? 'Image existante' : '')}</span>
-                        </div>
-                    </div>
-                    <div className="form-group">
-                        <label htmlFor="audio-upload">Prononciation (Audio)</label>
-                        <div className="audio-upload-control">
-                            <input 
-                                type="file" 
-                                id="audio-upload"
-                                accept="audio/mp3, audio/wav, audio/mpeg"
-                                onChange={handleAudioFileChange}
-                                className="visually-hidden"
-                            />
-                            <label htmlFor="audio-upload" className="button-secondary audio-upload-label">
-                                Choisir un fichier...
-                            </label>
-                            <span className="audio-file-name">
-                                {audioFile?.name || (formData.audio_url && !audioFile ? 'Fichier audio existant' : 'Aucun fichier')}
-                            </span>
-                            {formData.audio_url && (
-                                <button type="button" className="preview-audio-btn" onClick={previewAudio} aria-label="Écouter l'audio actuel">
-                                    <PlayIcon />
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                     <div className="form-group">
-                        <label>Exemples</label>
-                        <div className="examples-list">
-                            {examples.map((ex, index) => (
-                                <div key={index} className="example-row">
-                                    <input type="text" placeholder="Exemple en faka'uvea" value={ex.faka_uvea} onChange={e => handleExampleChange(index, 'faka_uvea', e.target.value)} />
-                                    <input type="text" placeholder="Exemple en français" value={ex.french} onChange={e => handleExampleChange(index, 'french', e.target.value)} />
-                                    <button type="button" className="remove-example-btn" onClick={() => removeExample(index)} aria-label={`Supprimer l'exemple ${index + 1}`}>&times;</button>
-                                </div>
-                            ))}
-                        </div>
-                        <button type="button" className="add-example-btn" onClick={addExample}>Ajouter un exemple</button>
-                    </div>
-                    <div className="modal-footer">
-                        <button type="button" className="button-secondary" onClick={onClose}>Annuler</button>
-                        <button type="submit" className="button-primary">Sauvegarder</button>
-                    </div>
-                </form>
+                <footer className="diploma-footer">
+                    <div>Signature de l'Académie</div>
+                    <div>Fait à Mata-Utu</div>
+                </footer>
+            </div>
+            <div className="diploma-actions">
+                <button className="button-secondary" onClick={onBack}>Retour aux examens</button>
+                <button className="button-primary" onClick={printDiploma}>Imprimer le diplôme</button>
             </div>
         </div>
     );
@@ -1592,157 +2161,248 @@ const GestionModal = ({ isOpen, onClose, onSave, word }) => {
 
 
 const GestionPage = () => {
+    const { dictionary, setDictionary, resetDictionary } = useAppContext();
+    const { addToast } = useToast();
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [editingWord, setEditingWord] = useState<DictionaryEntry | null>(null);
+    const [editingEntry, setEditingEntry] = useState<DictionaryEntry | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+    const importFileRef = useRef<HTMLInputElement>(null);
 
-    const openModal = (word = null) => {
-        setEditingWord(word);
+    const filteredDictionary = useMemo(() => {
+        if (!searchTerm) return dictionary;
+        const lowerSearch = searchTerm.toLowerCase();
+        return dictionary.filter(entry =>
+            entry.faka_uvea.toLowerCase().includes(lowerSearch) ||
+            entry.meanings.some(m => m.french.toLowerCase().includes(lowerSearch))
+        );
+    }, [searchTerm, dictionary]);
+
+    const handleAdd = () => {
+        setEditingEntry(null);
         setIsModalOpen(true);
     };
 
-    const closeModal = () => {
-        setIsModalOpen(false);
-        setEditingWord(null);
+    const handleEdit = (entry: DictionaryEntry) => {
+        setEditingEntry(entry);
+        setIsModalOpen(true);
     };
 
-    const handleSave = (formData) => {
-        // V2-TODO: Connect this to the database (dico_faka.db) using Gemini CLI.
-        // This will involve making an API call to an endpoint that performs the CREATE or UPDATE operation.
-        // For now, we simulate the action with an alert.
-        const action = editingWord ? 'Modification' : 'Ajout';
-        alert(`${action} simulée pour "${formData.faka_uvea}". Prêt pour l'intégration en V2.`);
-        console.log("Data to save:", formData);
-        closeModal();
-    };
-
-    const handleDelete = (word) => {
-        if (window.confirm(`Êtes-vous sûr de vouloir supprimer le mot "${word}" ?`)) {
-            // V2-TODO: Connect this to the database for the DELETE operation.
-            alert(`Suppression simulée pour "${word}". Prêt pour l'intégration en V2.`);
+    const handleDelete = (faka_uvea: string) => {
+        if (window.confirm(`Êtes-vous sûr de vouloir supprimer le mot "${faka_uvea}" ?`)) {
+            setDictionary(prev => prev.filter(entry => entry.faka_uvea !== faka_uvea));
+            addToast(`"${faka_uvea}" a été supprimé.`, 'info');
         }
     };
-    
-    const exportToCSV = () => {
-        // V2-TODO: This can be adapted to fetch all data from the database before exporting.
-        alert("Préparation de l'export CSV. Cette fonctionnalité sera entièrement fonctionnelle en V2.");
-        const headers = ['faka_uvea', 'french', 'type', 'phonetic', 'examples'];
-        let csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n";
-        
-        DICTIONARY_DATA.forEach(row => {
-            const values = headers.map(header => {
-                let value = row[header];
-                if (header === 'examples') {
-                    // Serialize array of objects into a JSON string, escaping quotes
-                    value = JSON.stringify(value).replace(/"/g, '""');
-                }
-                return `"${value}"`;
-            });
-            csvContent += values.join(",") + "\n";
-        });
 
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "dictionnaire_faka-uvea.csv");
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    const handleSaveWord = (wordToSave: DictionaryEntry) => {
+        setDictionary(prev => {
+            const isEditing = prev.some(e => e.faka_uvea === wordToSave.faka_uvea);
+            let newDict;
+            if (isEditing) {
+                newDict = prev.map(e => e.faka_uvea === wordToSave.faka_uvea ? wordToSave : e);
+            } else {
+                newDict = [...prev, wordToSave];
+            }
+            return newDict.sort((a, b) => a.faka_uvea.localeCompare(b.faka_uvea));
+        });
+        addToast(`"${wordToSave.faka_uvea}" a été sauvegardé.`, 'success');
+        setIsModalOpen(false);
     };
 
-    const handleImportCSV = (event) => {
-        const file = event.target.files[0];
+    const handleExport = () => {
+        const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
+            JSON.stringify(dictionary, null, 2)
+        )}`;
+        const link = document.createElement("a");
+        link.href = jsonString;
+        link.download = "dictionnaire_faka-uvea.json";
+        link.click();
+        addToast('Dictionnaire exporté !', 'success');
+    };
+
+    const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
         if (!file) return;
 
         const reader = new FileReader();
         reader.onload = (e) => {
-            // V2-TODO: Parse the CSV content and send it to the backend to update the database.
-            // Add validation and error handling for the CSV format.
-            alert(`Fichier "${file.name}" sélectionné. L'importation et la mise à jour de la base de données seront activées en V2.`);
+            try {
+                const text = e.target?.result;
+                const data = JSON.parse(text as string);
+                // Simple validation
+                if (Array.isArray(data) && data.every(item => 'faka_uvea' in item && 'meanings' in item)) {
+                    setDictionary(data);
+                    addToast('Dictionnaire importé avec succès !', 'success');
+                } else {
+                    addToast("Le fichier JSON n'est pas un dictionnaire valide.", 'error');
+                }
+            } catch (error) {
+                addToast("Erreur lors de la lecture du fichier.", 'error');
+                console.error("Import error:", error);
+            }
         };
-        reader.readAsText(file, 'UTF-8');
+        reader.readAsText(file);
     };
-
-    const triggerImport = () => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.csv';
-        input.onchange = handleImportCSV;
-        input.click();
-    };
-
 
     return (
-        <>
-            <GestionModal isOpen={isModalOpen} onClose={closeModal} onSave={handleSave} word={editingWord} />
-            <div className="gestion-page">
-                <div className="gestion-header">
-                    <h1 className="page-title">Gestion du Dictionnaire</h1>
-                    <div className="gestion-actions">
-                        <button className="button-secondary" onClick={triggerImport}>Importer CSV</button>
-                        <button className="button-secondary" onClick={exportToCSV}>Exporter CSV</button>
-                        <button className="button-primary" onClick={() => openModal()}>Ajouter un mot</button>
-                    </div>
+        <div className="page-container">
+            <div className="gestion-header">
+                <h1 className="page-title">Gestion du dictionnaire</h1>
+                 <div className="gestion-actions">
+                    <input type="file" ref={importFileRef} onChange={handleImport} accept=".json" style={{ display: 'none' }} />
+                    <button className="button-secondary" onClick={() => importFileRef.current?.click()} title="Importer des données depuis un fichier JSON"><UploadIcon /> Importer</button>
+                    <button className="button-secondary" onClick={handleExport} title="Exporter les données actuelles vers un fichier JSON"><DownloadIcon /> Exporter</button>
+                    <button className="button-secondary" onClick={resetDictionary} title="Restaurer les données d'origine">
+                        <RestartIcon/> Réinitialiser
+                    </button>
+                    <button className="button-primary" onClick={handleAdd}>Ajouter un mot</button>
                 </div>
-                <div className="gestion-table">
-                    <div className="gestion-row header">
-                        <div className="gestion-cell">Faka'uvea</div>
-                        <div className="gestion-cell">Français</div>
-                        <div className="gestion-cell actions">Actions</div>
-                    </div>
-                    {DICTIONARY_DATA.map(entry => (
-                        <div key={entry.faka_uvea} className="gestion-row">
-                            <div className="gestion-cell">{entry.faka_uvea}</div>
-                            <div className="gestion-cell">{entry.french}</div>
-                            <div className="gestion-cell actions">
-                                <button className="action-button edit" onClick={() => openModal(entry)}>Modifier</button>
-                                <button className="action-button delete" onClick={() => handleDelete(entry.faka_uvea)}>Supprimer</button>
-                            </div>
-                        </div>
-                    ))}
+                <div className="gestion-search">
+                    <input
+                        type="search"
+                        className="search-bar"
+                        placeholder="Rechercher un mot à gérer..."
+                        value={searchTerm}
+                        onChange={e => setSearchTerm(e.target.value)}
+                    />
                 </div>
             </div>
-        </>
+            
+            <div className="gestion-warning">
+                <strong>Information :</strong> Les modifications sont sauvegardées localement dans votre navigateur. Utilisez les boutons "Importer/Exporter" pour les sauvegarder durablement.
+            </div>
+
+            <div className="gestion-table">
+                <div className="gestion-row header">
+                    <div className="gestion-cell">Faka'uvea</div>
+                    <div className="gestion-cell">Français (sens principal)</div>
+                    <div className="gestion-cell actions">Actions</div>
+                </div>
+                {filteredDictionary.map(entry => (
+                    <div key={entry.faka_uvea} className="gestion-row">
+                        <div className="gestion-cell">{entry.faka_uvea}</div>
+                        <div className="gestion-cell">{entry.meanings[0]?.french || 'N/A'}</div>
+                        <div className="gestion-cell actions">
+                            <button className="action-button edit" onClick={() => handleEdit(entry)}>Éditer</button>
+                            <button className="action-button delete" onClick={() => handleDelete(entry.faka_uvea)}>Suppr.</button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {isModalOpen && (
+                <GestionModal
+                    entryToEdit={editingEntry}
+                    onClose={() => setIsModalOpen(false)}
+                    onSave={handleSaveWord}
+                />
+            )}
+        </div>
     );
 };
 
-
-// --- AUTH & APP ---
-const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState<User | null>(null);
-
-    const login = (username, password) => {
-        // V2-TODO: Replace with an API call to the database for authentication.
-        if (username === 'admin' && password === 'admin123') {
-            setUser({ username: 'admin', role: 'admin' });
-            return true;
-        }
-        if (username === 'user' && password === 'user123') {
-            setUser({ username: 'user', role: 'user' });
-            return true;
-        }
-        return false;
+const GestionModal = ({ entryToEdit, onClose, onSave }: { entryToEdit: DictionaryEntry | null, onClose: () => void, onSave: (entry: DictionaryEntry) => void }) => {
+    const [entry, setEntry] = useState<DictionaryEntry>(
+        entryToEdit ? JSON.parse(JSON.stringify(entryToEdit)) : { faka_uvea: '', meanings: [{ french: '', type: '', examples: [] }] }
+    );
+    const isEditing = !!entryToEdit;
+    
+    const handleMainChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setEntry(prev => ({ ...prev, [e.target.name]: e.target.value }));
     };
 
-    const logout = () => {
-        setUser(null);
+
+    const handleMeaningChange = (e: React.ChangeEvent<HTMLInputElement>, meaningIndex: number, field: 'french' | 'type') => {
+        const { value } = e.target;
+        setEntry(prev => {
+            const newMeanings = [...prev.meanings];
+            newMeanings[meaningIndex] = {...newMeanings[meaningIndex], [field]: value};
+            return { ...prev, meanings: newMeanings };
+        });
+    };
+
+    const addMeaning = () => {
+        setEntry(prev => ({
+            ...prev,
+            meanings: [...prev.meanings, { french: '', type: '', examples: [] }]
+        }));
+    };
+    
+    const removeMeaning = (index: number) => {
+        if (entry.meanings.length <= 1) return; // Keep at least one
+        setEntry(prev => ({
+            ...prev,
+            meanings: prev.meanings.filter((_, i) => i !== index)
+        }));
+    }
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSave(entry);
     };
 
     return (
-        <AuthContext.Provider value={{ user, login, logout }}>
-            {children}
-        </AuthContext.Provider>
+        <div className="modal-overlay">
+            <div className="modal-content">
+                <header className="modal-header">
+                    <h2>{isEditing ? 'Éditer le mot' : 'Ajouter un mot'}</h2>
+                    <button onClick={onClose} className="close-button"><CloseIcon /></button>
+                </header>
+                <form onSubmit={handleSubmit} className="modal-form">
+                    <div className="form-group">
+                        <label htmlFor="faka_uvea">Mot en Faka'uvea</label>
+                        <input type="text" id="faka_uvea" name="faka_uvea" value={entry.faka_uvea} onChange={handleMainChange} required disabled={isEditing} />
+                    </div>
+                     <div className="form-group">
+                        <label htmlFor="phonetic">Phonétique</label>
+                        <input type="text" id="phonetic" name="phonetic" value={entry.phonetic || ''} onChange={handleMainChange} />
+                    </div>
+                     <div className="form-group">
+                        <label htmlFor="image_url">URL de l'image</label>
+                        <input type="text" id="image_url" name="image_url" value={entry.image_url || ''} onChange={handleMainChange} />
+                    </div>
+                     <div className="form-group">
+                        <label htmlFor="audio_url">URL de l'audio</label>
+                        <input type="text" id="audio_url" name="audio_url" value={entry.audio_url || ''} onChange={handleMainChange} />
+                    </div>
+
+                    <div className="meanings-section">
+                        <h4>Significations</h4>
+                        {entry.meanings.map((meaning, index) => (
+                             <div key={index} className="meaning-form-block">
+                                {entry.meanings.length > 1 && <button type="button" className="remove-meaning-btn" onClick={() => removeMeaning(index)} title="Supprimer cette signification">×</button>}
+                                <div className="form-group">
+                                    <label htmlFor={`french-${index}`}>Traduction Française</label>
+                                    <input type="text" id={`french-${index}`} value={meaning.french} onChange={(e) => handleMeaningChange(e, index, 'french')} required />
+                                </div>
+                                 <div className="form-group">
+                                    <label htmlFor={`type-${index}`}>Type (n.c., v., etc.)</label>
+                                    <input type="text" id={`type-${index}`} value={meaning.type} onChange={(e) => handleMeaningChange(e, index, 'type')} />
+                                </div>
+                             </div>
+                        ))}
+                        <button type="button" className="add-example-btn" onClick={addMeaning}>+ Ajouter une signification</button>
+                    </div>
+
+                    <footer className="modal-footer">
+                        <button type="button" className="button-secondary" onClick={onClose}>Annuler</button>
+                        <button type="submit" className="button-primary">Sauvegarder</button>
+                    </footer>
+                </form>
+            </div>
+        </div>
     );
 };
 
-const LoginPage = () => {
+
+const LoginPage = ({ onNavClick }: { onNavClick: (page: string) => void; }) => {
+    const { login } = useAuth();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
-    const { login } = useAuth();
 
-    const handleSubmit = (e) => {
+    const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        setError('');
         const success = login(username, password);
         if (!success) {
             setError('Nom d\'utilisateur ou mot de passe incorrect.');
@@ -1750,235 +2410,282 @@ const LoginPage = () => {
     };
 
     return (
-        <div className="login-container">
-            <form className="login-form" onSubmit={handleSubmit}>
-                <h1 className="login-title">Connexion</h1>
-                <p className="login-subtitle">Accédez au dictionnaire Faka'uvea</p>
+        <div className="login-page-layout">
+            <form onSubmit={handleSubmit} className="login-form">
+                <h1 className="header-title">Faka'uvea</h1>
+                <h2 className="login-title">Connexion</h2>
+                <p className="login-subtitle">Accès à l'espace membre et admin.</p>
                 {error && <p className="login-error">{error}</p>}
-                <input
-                    type="text"
-                    className="login-input"
-                    placeholder="Nom d'utilisateur (user / admin)"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    required
-                />
-                <input
-                    type="password"
-                    className="login-input"
-                    placeholder="Mot de passe (user123 / admin123)"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                />
-                <button type="submit" className="login-button">Se connecter</button>
+                <div className="form-group">
+                    <input
+                        type="text"
+                        className="login-input"
+                        placeholder="Nom d'utilisateur (admin/user)"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        required
+                    />
+                </div>
+                <div className="form-group">
+                    <input
+                        type="password"
+                        className="login-input"
+                        placeholder="Mot de passe (admin/user)"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                    />
+                </div>
+                <button type="submit" className="login-button">
+                    <LockIcon />
+                    Se connecter
+                </button>
             </form>
         </div>
     );
 };
 
-const Footer = ({ setCurrentPage }) => {
-  const handleLinkClick = (page) => (e) => {
-    e.preventDefault();
-    setCurrentPage(page);
-  };
-  return (
-    <footer className="app-footer">
-      <div className="footer-content">
-        <div className="footer-column">
-          <h4>Faka'uvea</h4>
-          <p>Un projet pour la préservation et la promotion de la langue wallisienne.</p>
+const UserManagementPage = () => {
+    const { user: currentUser } = useAuth();
+    const { users, addUser, updateUser, deleteUser, resetUsers, setUsers } = useAuth();
+    const { addToast } = useToast();
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingUser, setEditingUser] = useState<User | null>(null);
+    const importFileRef = useRef<HTMLInputElement>(null);
+
+    const handleAdd = () => {
+        setEditingUser(null);
+        setIsModalOpen(true);
+    };
+
+    const handleEdit = (user: User) => {
+        setEditingUser(user);
+        setIsModalOpen(true);
+    };
+
+    const handleDelete = (userId: string) => {
+        if (userId === currentUser.id) {
+            alert("Vous ne pouvez pas supprimer votre propre compte.");
+            return;
+        }
+        if (users.length <= 1) {
+            alert("Vous ne pouvez pas supprimer le dernier utilisateur.");
+            return;
+        }
+        if (window.confirm(`Êtes-vous sûr de vouloir supprimer cet utilisateur ?`)) {
+            deleteUser(userId);
+            addToast("Utilisateur supprimé.", "info");
+        }
+    };
+    
+    const handleSave = (userToSave: User) => {
+        if (editingUser) {
+            updateUser(userToSave);
+            addToast(`Utilisateur "${userToSave.username}" mis à jour.`, 'success');
+        } else {
+            addUser(userToSave);
+            addToast(`Utilisateur "${userToSave.username}" ajouté.`, 'success');
+        }
+        setIsModalOpen(false);
+    };
+
+    const handleExport = () => {
+        // Exclude passwords from export
+        const usersToExport = users.map(({password, ...rest}) => rest);
+        const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
+            JSON.stringify(usersToExport, null, 2)
+        )}`;
+        const link = document.createElement("a");
+        link.href = jsonString;
+        link.download = "utilisateurs_faka-uvea.json";
+        link.click();
+        addToast('Liste des utilisateurs exportée !', 'success');
+    };
+
+    const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result;
+                const data = JSON.parse(text as string);
+                if (Array.isArray(data) && data.every(item => 'id' in item && 'username' in item && 'role' in item)) {
+                    setUsers(data);
+                    addToast('Utilisateurs importés avec succès !', 'success');
+                } else {
+                    addToast("Fichier JSON invalide.", 'error');
+                }
+            } catch (error) {
+                addToast("Erreur lors de la lecture du fichier.", 'error');
+            }
+        };
+        reader.readAsText(file);
+    };
+
+
+    return (
+        <div className="page-container">
+             <div className="gestion-header">
+                <h1 className="page-title">Gestion des Utilisateurs</h1>
+                <div className="gestion-actions">
+                    <input type="file" ref={importFileRef} onChange={handleImport} accept=".json" style={{ display: 'none' }} />
+                    <button className="button-secondary" onClick={() => importFileRef.current?.click()} title="Importer des utilisateurs"><UploadIcon /> Importer</button>
+                    <button className="button-secondary" onClick={handleExport} title="Exporter les utilisateurs"><DownloadIcon /> Exporter</button>
+                    <button className="button-secondary" onClick={resetUsers} title="Restaurer les utilisateurs par défaut">
+                        <RestartIcon/> Réinitialiser
+                    </button>
+                    <button className="button-primary" onClick={handleAdd}>Ajouter un utilisateur</button>
+                </div>
+            </div>
+             <div className="gestion-warning">
+                <strong>Information :</strong> Les modifications sont sauvegardées localement dans votre navigateur. Les mots de passe ne sont pas inclus dans l'export.
+            </div>
+            <div className="gestion-table">
+                <div className="gestion-row header">
+                    <div className="gestion-cell">Nom d'utilisateur</div>
+                    <div className="gestion-cell">Rôle</div>
+                    <div className="gestion-cell actions">Actions</div>
+                </div>
+                {users.map(user => (
+                    <div key={user.id} className="gestion-row">
+                        <div className="gestion-cell">{user.username}</div>
+                        <div className="gestion-cell">{user.role}</div>
+                        <div className="gestion-cell actions">
+                            <button className="action-button edit" onClick={() => handleEdit(user)}>Éditer</button>
+                            <button className="action-button delete" onClick={() => handleDelete(user.id)}>Suppr.</button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            {isModalOpen && (
+                <UserModal
+                    userToEdit={editingUser}
+                    onClose={() => setIsModalOpen(false)}
+                    onSave={handleSave}
+                />
+            )}
         </div>
-        <div className="footer-column">
-          <h4>Navigation</h4>
-          <ul className="footer-links">
-            <li><a href="#" onClick={handleLinkClick('Accueil')}>Accueil</a></li>
-            <li><a href="#" onClick={handleLinkClick('Dictionnaire')}>Dictionnaire</a></li>
-            <li><a href="#" onClick={handleLinkClick('Tuteur IA')}>Tuteur IA</a></li>
-            <li><a href="#" onClick={handleLinkClick('Le Faka\'uvea')}>La Langue</a></li>
-          </ul>
+    )
+}
+
+const UserModal = ({ userToEdit, onClose, onSave }: { userToEdit: User | null, onClose: () => void, onSave: (user: User) => void }) => {
+    const [user, setUser] = useState<Omit<User, 'id'> & { id?: string }>(
+        userToEdit || { username: '', role: 'user', password: '' }
+    );
+    const isEditing = !!userToEdit;
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+        const { name, value } = e.target;
+        setUser(prev => ({ ...prev, [name]: value }));
+    };
+    
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSave(user as User);
+    };
+
+    return (
+        <div className="modal-overlay">
+            <div className="modal-content">
+                <header className="modal-header">
+                    <h2>{isEditing ? 'Éditer l\'utilisateur' : 'Ajouter un utilisateur'}</h2>
+                    <button onClick={onClose} className="close-button"><CloseIcon /></button>
+                </header>
+                 <form onSubmit={handleSubmit} className="modal-form">
+                    <div className="form-group">
+                        <label htmlFor="username">Nom d'utilisateur</label>
+                        <input type="text" id="username" name="username" value={user.username} onChange={handleChange} required />
+                    </div>
+                     <div className="form-group">
+                        <label htmlFor="password">Mot de passe</label>
+                        <input type="password" id="password" name="password" placeholder={isEditing ? 'Laisser vide pour ne pas changer' : ''} onChange={handleChange} required={!isEditing} />
+                    </div>
+                     <div className="form-group">
+                        <label htmlFor="role">Rôle</label>
+                        <select id="role" name="role" value={user.role} onChange={handleChange} required>
+                            <option value="user">Utilisateur</option>
+                            <option value="admin">Administrateur</option>
+                        </select>
+                    </div>
+                     <footer className="modal-footer">
+                        <button type="button" className="button-secondary" onClick={onClose}>Annuler</button>
+                        <button type="submit" className="button-primary">Sauvegarder</button>
+                    </footer>
+                </form>
+            </div>
         </div>
-        <div className="footer-column">
-          <h4>Légal</h4>
-          <ul className="footer-links">
-            <li><a href="#">Politique de confidentialité</a></li>
-            <li><a href="#">Conditions d'utilisation</a></li>
-          </ul>
+    )
+}
+
+const AccessDeniedPage = ({ onNavClick }: { onNavClick: (page: string) => void }) => {
+    return (
+        <div className="page-container access-denied-container">
+            <LockIcon />
+            <h1 className="page-title">Accès Refusé</h1>
+            <p>Vous n'avez pas les permissions nécessaires pour accéder à cette page.</p>
+            <button className="button-primary" onClick={() => onNavClick('home')}>
+                Retour à l'accueil
+            </button>
         </div>
-      </div>
-      <div className="footer-bottom">
-        <p>© {new Date().getFullYear()} Dictionnaire Faka'uvea. Tous droits réservés.</p>
-      </div>
-    </footer>
-  );
+    );
 };
 
 
-const MainApp = () => {
-  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
-    return (window.localStorage.getItem('faka-uvea-theme') as ThemePreference) || 'system';
-  });
-  const [currentPage, setCurrentPage] = useState('Accueil');
-  const [favorites, setFavorites] = useState(() => {
-      try {
-        const item = window.localStorage.getItem('faka-uvea-favorites');
-        return item ? JSON.parse(item) : [];
-      } catch (error) {
-        console.error("Error reading favorites from localStorage", error);
-        return [];
-      }
-  });
-  const [history, setHistory] = useState(() => {
-    try {
-        const item = window.localStorage.getItem('faka-uvea-history');
-        return item ? JSON.parse(item) : [];
-    } catch (error) {
-        console.error("Error reading history from localStorage", error);
-        return [];
-    }
-  });
+// --- APP STRUCTURE ---
+const AuthenticatedApp = () => {
+    const { user } = useAuth();
+    const [currentPage, setCurrentPage] = useState('home');
 
-  useEffect(() => {
-    try {
-        window.localStorage.setItem('faka-uvea-favorites', JSON.stringify(favorites));
-    } catch (error) {
-        console.error("Error saving favorites to localStorage", error);
-    }
-  }, [favorites]);
-  
-  useEffect(() => {
-    try {
-        window.localStorage.setItem('faka-uvea-history', JSON.stringify(history));
-    } catch (error) {
-        console.error("Error saving history to localStorage", error);
-    }
-  }, [history]);
+    const handlePageNavigation = (pageId: string) => {
+        setCurrentPage(pageId);
+        window.scrollTo(0, 0);
+    };
 
-  const speak = useCallback((textOrEntry: string | DictionaryEntry) => {
-    let textToSpeak: string;
-    let audioUrl: string | undefined;
-
-    if (typeof textOrEntry === 'string') {
-        textToSpeak = textOrEntry;
-        const entry = DICTIONARY_DATA.find(e => e.faka_uvea === textToSpeak);
-        audioUrl = entry?.audio_url;
-    } else {
-        textToSpeak = textOrEntry.faka_uvea;
-        audioUrl = textOrEntry.audio_url;
-    }
-
-    if (audioUrl) {
-        const audio = new Audio(audioUrl);
-        audio.play().catch(e => console.error("Error playing custom audio:", e));
-    } else if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(textToSpeak);
-      const voices = window.speechSynthesis.getVoices();
-      let voice = voices.find(v => v.lang === 'wls'); 
-      if (!voice) voice = voices.find(v => v.lang.startsWith('fr'));
-      
-      utterance.voice = voice;
-      utterance.lang = voice ? voice.lang : 'fr-FR';
-      utterance.rate = 0.9;
-      window.speechSynthesis.speak(utterance);
-    } else {
-      alert("La synthèse vocale n'est pas supportée par votre navigateur.");
-    }
-  }, []);
-
-  useEffect(() => {
-    const applyTheme = (theme: ThemePreference) => {
-        window.localStorage.setItem('faka-uvea-theme', theme);
-        if (theme === 'system') {
-            const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            document.body.setAttribute('data-theme', systemPrefersDark ? 'dark' : 'light');
-        } else {
-            document.body.setAttribute('data-theme', theme);
+    const renderPage = () => {
+        switch (currentPage) {
+            case 'home': return <HomePage onNavClick={handlePageNavigation} />;
+            case 'dictionary': return <DictionaryPage />;
+            case 'guide': return <GuidePage />;
+            case 'favorites': return <FavoritesPage />;
+            case 'history': return <HistoryPage />;
+            case 'ai_tutor': return <AITutorPage />;
+            case 'faka-uvea': return <FakaUveaInfoPage />;
+            case 'games': return <GamesPage />;
+            case 'exams': return <ExamsPage />;
+            case 'gestion':
+                return user?.role === 'admin' ? <GestionPage /> : <AccessDeniedPage onNavClick={handlePageNavigation} />;
+            case 'user_management':
+                return user?.role === 'admin' ? <UserManagementPage /> : <AccessDeniedPage onNavClick={handlePageNavigation} />;
+            default: return <HomePage onNavClick={handlePageNavigation} />;
         }
     };
-    
-    applyTheme(themePreference);
-    
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleSystemThemeChange = () => {
-        if (themePreference === 'system') {
-            applyTheme('system');
-        }
-    };
-    
-    mediaQuery.addEventListener('change', handleSystemThemeChange);
-    return () => mediaQuery.removeEventListener('change', handleSystemThemeChange);
-  }, [themePreference]);
-  
-  useEffect(() => {
-    if ('speechSynthesis' in window && window.speechSynthesis.onvoiceschanged !== undefined) {
-        window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-    }
-  }, []);
 
-  const toggleFavorite = (faka_uvea: string) => {
-      setFavorites(prev => {
-          if (prev.includes(faka_uvea)) {
-              return prev.filter(word => word !== faka_uvea);
-          } else {
-              return [...prev, faka_uvea];
-          }
-      });
-  };
-  
-  const logHistory = (faka_uvea: string) => {
-    setHistory(prev => {
-        const newHistory = prev.filter(word => word !== faka_uvea);
-        newHistory.unshift(faka_uvea);
-        return newHistory.slice(0, 50);
-    });
-  };
-
-  const contextValue = { themePreference, setThemePreference, speak, favorites, toggleFavorite, history, logHistory, setCurrentPage };
-  
-  const renderPage = () => {
-      switch(currentPage) {
-          case 'Accueil': return <HomePage setCurrentPage={setCurrentPage} />;
-          case 'Dictionnaire': return <DictionaryPage />;
-          case 'Favoris': return <FavoritesPage />;
-          case 'Historique': return <HistoryPage />;
-          case 'Guide': return <GuidePage />;
-          case 'Tuteur IA': return <AITutorPage />;
-          case 'Le Faka\'uvea': return <FakaUveaInfoPage />;
-          case 'Jeux': return <GamesPage />;
-          case 'Certification': return <CertificationPage />;
-          case 'Gestion': return <GestionPage />;
-          default: return <HomePage setCurrentPage={setCurrentPage} />;
-      }
-  }
-
-  return (
-    <AppContext.Provider value={contextValue}>
-      <div className="app-layout">
-        <Header currentPage={currentPage} setCurrentPage={setCurrentPage} />
-        <main>
-          <div key={currentPage} className="page-container">
-            {renderPage()}
-          </div>
-        </main>
-        <Footer setCurrentPage={setCurrentPage} />
-      </div>
-    </AppContext.Provider>
-  );
+    return (
+        <div className="app-layout">
+            <Header currentPage={currentPage} onNavClick={handlePageNavigation} />
+            <main>
+                {renderPage()}
+            </main>
+            <Footer onNavClick={handlePageNavigation}/>
+        </div>
+    );
 };
 
 const App = () => {
     const { user } = useAuth();
-    return user ? <MainApp /> : <LoginPage />;
-}
+    return user ? <AuthenticatedApp /> : <LoginPage onNavClick={() => {}} />;
+};
 
-// --- RENDER ---
-const container = document.getElementById('root');
-if (container) {
-    const root = ReactDOM.createRoot(container);
-    root.render(
+const Root = () => (
+    <ToastProvider>
         <AuthProvider>
-            <App />
+            <AppProvider>
+                <App />
+            </AppProvider>
         </AuthProvider>
-    );
-}
+    </ToastProvider>
+);
+
+ReactDOM.createRoot(document.getElementById('root')!).render(<Root />);
