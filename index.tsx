@@ -810,7 +810,7 @@ const Header = ({ currentPage, onNavClick }: { currentPage: string, onNavClick: 
     ));
 
     return (
-        <header className="app-header">
+        <header className={`app-header ${isMobileMenuOpen ? 'mobile-menu-active' : ''}`}>
             <a href="#home" onClick={(e) => handleNavClick('home', e)} className="header-title-link">
                 <h1 className="header-title">Faka'uvea</h1>
             </a>
@@ -2311,7 +2311,6 @@ const GestionModal = ({ entryToEdit, onClose, onSave }: { entryToEdit: Dictionar
         setEntry(prev => ({ ...prev, [e.target.name]: e.target.value }));
     };
 
-
     const handleMeaningChange = (e: React.ChangeEvent<HTMLInputElement>, meaningIndex: number, field: 'french' | 'type') => {
         const { value } = e.target;
         setEntry(prev => {
@@ -2334,7 +2333,38 @@ const GestionModal = ({ entryToEdit, onClose, onSave }: { entryToEdit: Dictionar
             ...prev,
             meanings: prev.meanings.filter((_, i) => i !== index)
         }));
-    }
+    };
+
+    const handleExampleChange = (e: React.ChangeEvent<HTMLInputElement>, meaningIndex: number, exampleIndex: number, field: 'faka_uvea' | 'french') => {
+        const { value } = e.target;
+        setEntry(prev => {
+            const newMeanings = [...prev.meanings];
+            const newExamples = [...newMeanings[meaningIndex].examples];
+            newExamples[exampleIndex] = { ...newExamples[exampleIndex], [field]: value };
+            newMeanings[meaningIndex] = { ...newMeanings[meaningIndex], examples: newExamples };
+            return { ...prev, meanings: newMeanings };
+        });
+    };
+
+    const addExample = (meaningIndex: number) => {
+        setEntry(prev => {
+            const newMeanings = JSON.parse(JSON.stringify(prev.meanings));
+            if (!newMeanings[meaningIndex].examples) {
+                newMeanings[meaningIndex].examples = [];
+            }
+            newMeanings[meaningIndex].examples.push({ faka_uvea: '', french: '' });
+            return { ...prev, meanings: newMeanings };
+        });
+    };
+
+    const removeExample = (meaningIndex: number, exampleIndex: number) => {
+        setEntry(prev => {
+            const newMeanings = JSON.parse(JSON.stringify(prev.meanings));
+            newMeanings[meaningIndex].examples.splice(exampleIndex, 1);
+            return { ...prev, meanings: newMeanings };
+        });
+    };
+
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -2379,9 +2409,30 @@ const GestionModal = ({ entryToEdit, onClose, onSave }: { entryToEdit: Dictionar
                                     <label htmlFor={`type-${index}`}>Type (n.c., v., etc.)</label>
                                     <input type="text" id={`type-${index}`} value={meaning.type} onChange={(e) => handleMeaningChange(e, index, 'type')} />
                                 </div>
+                                <div className="examples-section">
+                                    <label>Exemples</label>
+                                    {(meaning.examples || []).map((example, exIndex) => (
+                                        <div key={exIndex} className="example-form-block">
+                                            <input 
+                                                type="text" 
+                                                placeholder="Exemple en Faka'uvea" 
+                                                value={example.faka_uvea} 
+                                                onChange={(e) => handleExampleChange(e, index, exIndex, 'faka_uvea')} 
+                                            />
+                                            <input 
+                                                type="text" 
+                                                placeholder="Traduction en Français" 
+                                                value={example.french} 
+                                                onChange={(e) => handleExampleChange(e, index, exIndex, 'french')} 
+                                            />
+                                            <button type="button" className="remove-example-btn" onClick={() => removeExample(index, exIndex)} title="Supprimer cet exemple">×</button>
+                                        </div>
+                                    ))}
+                                    <button type="button" className="add-example-btn" onClick={() => addExample(index)}>+ Ajouter un exemple</button>
+                                </div>
                              </div>
                         ))}
-                        <button type="button" className="add-example-btn" onClick={addMeaning}>+ Ajouter une signification</button>
+                        <button type="button" className="add-meaning-btn" onClick={addMeaning}>+ Ajouter une signification</button>
                     </div>
 
                     <footer className="modal-footer">
