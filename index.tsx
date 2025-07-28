@@ -1,9 +1,4 @@
 
-
-
-
-
-
 import React, { useState, useEffect, createContext, useContext, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { GoogleGenAI, Chat } from "@google/genai";
@@ -54,6 +49,11 @@ type User = {
     role: 'user' | 'admin';
 };
 
+type Message = {
+    role: 'user' | 'ai';
+    text: string;
+};
+
 type AppContextType = {
   themePreference: ThemePreference;
   setThemePreference: (theme: ThemePreference) => void;
@@ -66,6 +66,11 @@ type AppContextType = {
   dictionary: DictionaryEntry[];
   setDictionary: React.Dispatch<React.SetStateAction<DictionaryEntry[]>>;
   resetDictionary: () => void;
+  chat: Chat | null;
+  messages: Message[];
+  isTutorLoading: boolean;
+  sendMessageToTutor: (message: string) => Promise<void>;
+  initializeChat: () => void;
 };
 
 type AuthContextType = {
@@ -534,10 +539,15 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 };
 
 const AppProvider = ({ children }: { children: React.ReactNode }) => {
+    const { user } = useAuth();
     const [themePreference, setThemePreference] = useLocalStorage<ThemePreference>('fkv2_theme', 'system');
     const [favorites, setFavorites] = useLocalStorage<string[]>('fkv2_favorites', []);
     const [history, setHistory] = useLocalStorage<string[]>('fkv2_history', []);
     const [dictionary, setDictionary] = useLocalStorage<DictionaryEntry[]>('fkv2_dictionary', DICTIONARY_DATA);
+    
+    const [chat, setChat] = useState<Chat | null>(null);
+    const [messages, setMessages] = useState<Message[]>([]);
+    const [isTutorLoading, setIsTutorLoading] = useState(false);
 
     useEffect(() => {
         const applyTheme = () => {
@@ -582,13 +592,47 @@ const AppProvider = ({ children }: { children: React.ReactNode }) => {
         setDictionary(DICTIONARY_DATA);
     }, [setDictionary]);
 
+    const initializeChat = useCallback(() => {
+        if (!chat && user) {
+            const newChat = ai.chats.create({
+                model: 'gemini-2.5-flash',
+                config: {
+                    systemInstruction: "Tu es un tuteur expert de la langue Faka'uvea (wallisien). Tu es amical, encourageant et patient. Tes réponses doivent être claires, concises et adaptées à un apprenant. Tu peux donner des exemples, expliquer des points de grammaire, ou traduire des phrases. Tu dois toujours répondre en français, sauf si on te demande explicitement d'écrire en faka'uvea. N'hésite pas à utiliser des emojis pour rendre l'apprentissage plus amusant. 😊",
+                },
+            });
+            setChat(newChat);
+            setMessages([{role: 'ai', text: `Mālō te ma'uli, ${user.username} ! 👋 Je suis ton tuteur personnel. Comment puis-je t'aider à apprendre le faka'uvea aujourd'hui ?`}]);
+        }
+    }, [chat, user]);
+
+    const sendMessageToTutor = useCallback(async (message: string) => {
+        if (!chat || isTutorLoading) return;
+
+        const userMessage: Message = { role: 'user', text: message };
+        setMessages(prev => [...prev, userMessage]);
+        setIsTutorLoading(true);
+
+        try {
+            const response = await chat.sendMessage({ message: userMessage.text });
+            const aiMessage: Message = { role: 'ai', text: response.text };
+            setMessages(prev => [...prev, aiMessage]);
+        } catch (error) {
+            console.error("AI Tutor Error:", error);
+            setMessages(prev => [...prev, { role: 'ai', text: "Désolé, une erreur s'est produite. Veuillez réessayer." }]);
+        } finally {
+            setIsTutorLoading(false);
+        }
+    }, [chat, isTutorLoading]);
+
+
     const value = useMemo(() => ({
         themePreference, setThemePreference,
         speak,
         favorites, toggleFavorite,
         history, logHistory, setHistory,
-        dictionary, setDictionary, resetDictionary
-    }), [themePreference, favorites, history, dictionary, setThemePreference, speak, toggleFavorite, logHistory, setHistory, setDictionary, resetDictionary]);
+        dictionary, setDictionary, resetDictionary,
+        chat, messages, isTutorLoading, sendMessageToTutor, initializeChat
+    }), [themePreference, favorites, history, dictionary, chat, messages, isTutorLoading, setThemePreference, speak, toggleFavorite, logHistory, setHistory, setDictionary, resetDictionary, sendMessageToTutor, initializeChat]);
 
     return (
         <AppContext.Provider value={value}>
@@ -1495,10 +1539,11 @@ const ScrabbleGame = () => {
 
 const WordSearchGame = () => {
     const { dictionary } = useApp();
-    const [grid, setGrid] = useState([]);
-    const [words, setWords] = useState([]);
-    const [foundWords, setFoundWords] = useState([]);
-    const [selection, setSelection] = useState([]);
+    const [grid, setGrid] = useState<string[][]>([]);
+    const [words, setWords] = useState<string[]>([]);
+    const [foundWords, setFoundWords] = useState<string[]>([]);
+    const [selection, setSelection] = useState<{row: number, col: number, id: string}[]>([]);
+    const [foundCoordinates, setFoundCoordinates] = useState<Set<string>>(new Set());
     const isSelecting = useRef(false);
     const gridSize = 12;
 
@@ -1510,9 +1555,8 @@ const WordSearchGame = () => {
         const chosenWords = [...new Set(availableWords)].sort(() => 0.5 - Math.random()).slice(0, 8);
         setWords(chosenWords);
 
-        let newGrid = Array.from({ length: gridSize }, () => Array(gridSize).fill(null));
+        let newGrid: (string | null)[][] = Array.from({ length: gridSize }, () => Array(gridSize).fill(null));
         
-        // This is a simplified placement algorithm. A more robust one would handle collisions better.
         chosenWords.forEach(word => {
             let placed = false;
             let attempts = 0;
@@ -1551,54 +1595,61 @@ const WordSearchGame = () => {
             }
         });
         
-        for (let r = 0; r < gridSize; r++) {
-            for (let c = 0; c < gridSize; c++) {
-                if (newGrid[r][c] === null) {
-                    newGrid[r][c] = ALPHABET[Math.floor(Math.random() * (ALPHABET.length -1))]; // no '
-                }
+        const finalGrid: string[][] = newGrid.map(row => row.map(cell => {
+            if (cell === null) {
+                return ALPHABET[Math.floor(Math.random() * (ALPHABET.length - 1))]; // no '
             }
-        }
-        setGrid(newGrid);
+            return cell;
+        }));
+
+        setGrid(finalGrid);
         setFoundWords([]);
+        setFoundCoordinates(new Set());
     }, [dictionary]);
 
     useEffect(setupGame, [setupGame]);
 
-    const handleCellSelection = (row, col) => {
+    const handleCellSelection = (row: number, col: number) => {
         const cellId = `${row}-${col}`;
         if (selection.some(c => c.id === cellId)) return;
         setSelection(prev => [...prev, { row, col, id: cellId }]);
     };
 
-    const handleMouseDown = (row, col) => {
+    const handleMouseDown = (row: number, col: number) => {
         isSelecting.current = true;
         setSelection([{ row, col, id: `${row}-${col}` }]);
     };
-    const handleMouseEnter = (row, col) => {
+    const handleMouseEnter = (row: number, col: number) => {
         if (isSelecting.current) {
             handleCellSelection(row, col);
         }
     };
     const handleMouseUp = () => {
         isSelecting.current = false;
+        if (selection.length === 0) return;
+
         const selectedString = selection.map(cell => grid[cell.row][cell.col]).join('');
         const reversedString = [...selectedString].reverse().join('');
 
+        let foundWord: string | null = null;
         if (words.includes(selectedString) && !foundWords.includes(selectedString)) {
-            setFoundWords(prev => [...prev, selectedString]);
+            foundWord = selectedString;
         } else if (words.includes(reversedString) && !foundWords.includes(reversedString)) {
-            setFoundWords(prev => [...prev, reversedString]);
+            foundWord = reversedString;
+        }
+        
+        if (foundWord) {
+            setFoundWords(prev => [...prev, foundWord!]);
+            setFoundCoordinates(prev => {
+                const newCoords = new Set(prev);
+                selection.forEach(cell => newCoords.add(`${cell.row}-${cell.col}`));
+                return newCoords;
+            });
         }
         setSelection([]);
     };
     
-    const isCellInSelection = (row, col) => selection.some(c => c.row === row && c.col === col);
-    
-    const isCellInFoundWord = (row, col) => {
-        // This is a simplified check. A full implementation would store coordinates of found words.
-        // For now, we just highlight based on the word list.
-        return false; // To avoid performance issues on re-render. Style found cells from word list instead.
-    }
+    const isCellInSelection = (row: number, col: number) => selection.some(c => c.row === row && c.col === col);
     
     const allFound = foundWords.length === words.length && words.length > 0;
 
@@ -1626,7 +1677,7 @@ const WordSearchGame = () => {
                     row.map((cell, c) => (
                         <div
                             key={`${r}-${c}`}
-                            className={`word-search-cell ${isCellInSelection(r, c) ? 'selected' : ''}`}
+                            className={`word-search-cell ${isCellInSelection(r, c) ? 'selected' : ''} ${foundCoordinates.has(`${r}-${c}`) ? 'found' : ''}`}
                             onMouseDown={() => handleMouseDown(r, c)}
                             onMouseEnter={() => handleMouseEnter(r, c)}
                         >
@@ -2181,10 +2232,8 @@ const QuizPage = ({ levelName, onNavigate }) => {
 
 const AITutorPage = ({ onNavigate }) => {
     const { user } = useAuth();
-    const [chat, setChat] = useState<Chat | null>(null);
-    const [messages, setMessages] = useState([]);
+    const { messages, isTutorLoading, sendMessageToTutor, initializeChat, chat } = useApp();
     const [input, setInput] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
     const chatWindowRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -2194,37 +2243,18 @@ const AITutorPage = ({ onNavigate }) => {
     }, [messages]);
     
     useEffect(() => {
-       if (user) {
-            const newChat = ai.chats.create({
-                model: 'gemini-2.5-flash',
-                config: {
-                    systemInstruction: "Tu es un tuteur expert de la langue Faka'uvea (wallisien). Tu es amical, encourageant et patient. Tes réponses doivent être claires, concises et adaptées à un apprenant. Tu peux donner des exemples, expliquer des points de grammaire, ou traduire des phrases. Tu dois toujours répondre en français, sauf si on te demande explicitement d'écrire en faka'uvea. N'hésite pas à utiliser des emojis pour rendre l'apprentissage plus amusant. 😊",
-                },
-            });
-            setChat(newChat);
-            setMessages([{role: 'ai', text: `Mālō te ma'uli, ${user.username} ! 👋 Je suis ton tuteur personnel. Comment puis-je t'aider à apprendre le faka'uvea aujourd'hui ?`}]);
+       if (user && !chat) {
+            initializeChat();
        }
-    }, [user]);
+    }, [user, chat, initializeChat]);
 
-    const handleSendMessage = async (e) => {
+    const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!input.trim() || isLoading || !chat) return;
+        if (!input.trim() || isTutorLoading || !chat) return;
 
-        const userMessage = { role: 'user', text: input };
-        setMessages(prev => [...prev, userMessage]);
+        const textToSend = input;
         setInput('');
-        setIsLoading(true);
-
-        try {
-            const response = await chat.sendMessage({ message: userMessage.text });
-            const aiMessage = { role: 'ai', text: response.text };
-            setMessages(prev => [...prev, aiMessage]);
-        } catch (error) {
-            console.error("AI Tutor Error:", error);
-            setMessages(prev => [...prev, { role: 'ai', text: "Désolé, une erreur s'est produite. Veuillez réessayer." }]);
-        } finally {
-            setIsLoading(false);
-        }
+        await sendMessageToTutor(textToSend);
     };
 
     if (!user) {
@@ -2258,7 +2288,7 @@ const AITutorPage = ({ onNavigate }) => {
                             </div>
                         </div>
                     ))}
-                    {isLoading && (
+                    {isTutorLoading && (
                          <div className="chat-message ai-message">
                             <div className="message-avatar"><AiIcon /></div>
                             <div className="message-content">
@@ -2275,9 +2305,9 @@ const AITutorPage = ({ onNavigate }) => {
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             placeholder="Posez votre question ici..."
-                            disabled={isLoading}
+                            disabled={isTutorLoading}
                         />
-                        <button type="submit" className="send-button" disabled={isLoading || !input.trim()} aria-label="Envoyer">
+                        <button type="submit" className="send-button" disabled={isTutorLoading || !input.trim()} aria-label="Envoyer">
                             <SendIcon />
                         </button>
                     </form>
@@ -2681,6 +2711,8 @@ const App = () => {
             quiz: 'page-default-bg',
             guide: 'page-guide-bg',
             games: 'page-games-bg',
+            dictionary: 'page-dictionary-bg',
+            info: 'page-info-bg',
         };
         const defaultClass = 'page-other';
         const pageClass = pageClassMap[page] || defaultClass;

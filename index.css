@@ -73,6 +73,8 @@ body {
 body.page-default-bg { background-image: url('background.jpg'); }
 body.page-guide-bg { background-image: url('image2.png'); }
 body.page-games-bg { background-image: url('image3.png'); }
+body.page-dictionary-bg { background-image: url('image4.png'); }
+body.page-info-bg { background-image: url('image5.png'); }
 body.page-other { background-image: none; }
 
 
@@ -1783,6 +1785,12 @@ html[data-theme='papyrus'] .game-tabs button.active { color: var(--bg-primary); 
     background-color: var(--accent-primary);
     color: white;
 }
+.word-search-cell.found {
+    background-color: var(--success-color);
+    color: white;
+    border-color: var(--success-color);
+    cursor: default;
+}
 @media(min-width: 768px) {
     .word-search-container { flex-direction: row; }
     .word-search-sidebar { width: 200px; }
@@ -1874,27 +1882,118 @@ html[data-theme='papyrus'] .game-tabs button.active { color: var(--bg-primary); 
     font-size: 2rem;
 }
 .petit-bac-form { display: flex; flex-direction: column; gap: 1.5rem; margin-bottom: 2rem; }
-.petit-bac-results { }
-.total-score { font-size: 1.5rem; text-align: center; margin-bottom: 2rem; }
-.results-table { display: flex; flex-direction: column; gap: 0.5rem; }
-.results-row { display: grid; grid-template-columns: 1fr 1fr 80px 1.5fr; gap: 1rem; padding: 1rem; border-radius: 8px; background-color: var(--bg-primary); }
-.results-row.header { font-weight: bold; }
-.results-row.valid { border-left: 4px solid var(--success-color); }
-.results-row.invalid { border-left: 4px solid var(--error-color); }
+.petit-bac-results {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
 
+.petit-bac-results h3 {
+    text-align: center;
+}
 
-/* Exam / Quiz Page */
-.exam-center-container { text-align: center; }
+.total-score {
+    text-align: center;
+    font-size: 1.5rem;
+    font-weight: bold;
+}
+
+.results-table {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.results-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 80px 2fr;
+    gap: 1rem;
+    padding: 1rem;
+    align-items: center;
+}
+
+.results-row:not(:last-child) {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.results-row.header {
+    font-weight: bold;
+    background-color: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.results-row.invalid {
+    color: var(--error-color);
+}
+
+.results-row.valid {
+    color: var(--success-color);
+}
+
+/* FakaUveaInfoPage Styles */
+.faka-uvea-info-page .info-section {
+    background-color: var(--bg-secondary);
+    padding: 2rem;
+    border-radius: 12px;
+    margin-bottom: 2rem;
+    border: 1px solid var(--border-color);
+}
+.faka-uvea-info-page .info-section h2 {
+    font-family: var(--font-header);
+    font-size: 1.8rem;
+    color: var(--accent-primary);
+    margin-top: 0;
+}
+.alphabet-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: center;
+}
+.alphabet-letter {
+    width: 50px;
+    height: 50px;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    font-weight: bold;
+}
+.pronunciation-guide {
+    margin-top: 1.5rem;
+}
+.pronunciation-guide dt {
+    font-weight: bold;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    margin-top: 1rem;
+}
+.pronunciation-guide dd {
+    margin-left: 0;
+    color: var(--text-secondary);
+    padding-left: 1rem;
+    border-left: 2px solid var(--accent-primary);
+    margin-top: 0.5rem;
+}
+
+/* Exams/Certification Page */
+.exam-center-container {
+    text-align: center;
+}
 .exam-center-header {
     margin-bottom: 3rem;
 }
 .exam-center-header .trophy-icon {
-    width: 60px; height: 60px; margin: 0 auto 1rem;
-    background-color: var(--accent-primary);
-    color: white;
-    border-radius: 50%;
-    padding: 1rem;
-    box-sizing: border-box;
+    color: var(--gold-color);
+    margin: 0 auto 1rem auto;
+}
+.exam-center-header .page-title {
+    border: none;
+    margin-bottom: 0.5rem;
 }
 .exam-selection-grid {
     display: grid;
@@ -1907,147 +2006,164 @@ html[data-theme='papyrus'] .game-tabs button.active { color: var(--bg-primary); 
     border-top: 5px solid var(--level-color);
     border-radius: 12px;
     padding: 2rem;
-    transition: all 0.2s ease;
-    box-shadow: 0 4px 10px var(--shadow-color);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    transition: transform 0.2s, box-shadow 0.2s;
 }
-.exam-card:hover { transform: translateY(-5px); box-shadow: 0 8px 15px var(--shadow-color); }
+.exam-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 20px -5px var(--shadow-color);
+}
 .exam-card-icon {
-    width: 50px; height: 50px;
-    color: white;
+    width: 60px;
+    height: 60px;
     border-radius: 50%;
-    margin: 0 auto 1.5rem;
-    display: flex; align-items: center; justify-content: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    margin-bottom: 1rem;
 }
-.exam-card h3 { font-family: var(--font-header); font-size: 2rem; margin: 0 0 0.5rem 0; }
-.exam-highscore { font-size: 1rem; margin: 0 0 1rem 0; }
-.exam-details { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1.5rem; }
+.exam-card h3 {
+    font-size: 1.8rem;
+    font-family: var(--font-header);
+    margin: 0;
+}
+.exam-highscore {
+    font-weight: bold;
+}
+.exam-details {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
 .exam-card .button-primary {
     background-color: var(--level-color);
-    box-shadow: 0 4px 10px color-mix(in srgb, var(--level-color) 30%, transparent);
+    color: white;
+    width: 100%;
 }
-.exam-card .button-primary:disabled { background-color: var(--text-secondary); cursor: not-allowed; }
-.unlock-info { font-size: 0.8rem; color: var(--text-secondary); margin-top: 1rem; }
+.exam-card .button-primary:disabled {
+    background-color: var(--text-secondary);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+.unlock-info {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 1rem;
+}
 
-.quiz-container, .diploma-wrapper {
-    max-width: 800px;
+/* Quiz/Diploma Page */
+.quiz-container {
+    max-width: 700px;
     margin: 0 auto;
     background-color: var(--bg-secondary);
-    border: 1px solid var(--border-color);
+    padding: 2rem;
     border-radius: 12px;
-    padding: 2.5rem;
 }
-.quiz-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-.quiz-header h3 { font-family: var(--font-header); font-size: 1.5rem; margin: 0; }
-.quiz-timer { font-size: 1.2rem; font-weight: bold; background-color: var(--bg-primary); padding: 0.5rem 1rem; border-radius: 20px;}
-.quiz-question { font-size: 1.2rem; text-align: center; margin-bottom: 2rem; }
-.quiz-options { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem;}
+.quiz-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+.quiz-header h3 {
+    font-size: 1.5rem;
+    margin: 0;
+}
+.quiz-timer {
+    font-size: 1.2rem;
+    font-weight: bold;
+    background-color: var(--bg-primary);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+}
+.quiz-question {
+    font-size: 1.3rem;
+    text-align: center;
+    margin-bottom: 2.5rem;
+}
+.quiz-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
 .quiz-option {
     padding: 1rem;
-    border: 1px solid var(--border-color);
     border-radius: 8px;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    border: 1px solid var(--border-color);
     background-color: var(--bg-primary);
+    cursor: pointer;
+    transition: all 0.2s;
 }
 .quiz-option:hover:not(:disabled) {
     border-color: var(--accent-primary);
-    background-color: color-mix(in srgb, var(--accent-primary) 10%, transparent);
 }
-.quiz-option:disabled { cursor: default; }
-.quiz-option.correct { background-color: var(--success-color); border-color: var(--success-color); color: white;}
-.quiz-option.incorrect { background-color: var(--error-color); border-color: var(--error-color); color: white;}
-.quiz-progress { text-align: center; color: var(--text-secondary); }
+.quiz-option.correct {
+    background-color: var(--success-color); color: white;
+}
+.quiz-option.incorrect {
+    background-color: var(--error-color); color: white;
+}
+.quiz-progress {
+    text-align: center;
+    color: var(--text-secondary);
+}
 
-.diploma-wrapper { text-align: center; }
+.diploma-wrapper {
+    padding: 2rem 0;
+}
 .diploma-container {
+    max-width: 800px;
+    margin: 0 auto;
     border: 10px solid var(--diploma-color);
     padding: 2rem;
+    background-color: var(--bg-secondary);
+    text-align: center;
     position: relative;
-    background: repeating-linear-gradient(45deg, var(--bg-primary), var(--bg-primary) 10px, var(--bg-secondary) 10px, var(--bg-secondary) 20px);
 }
-.diploma-header { border-bottom: 2px solid var(--diploma-color); padding-bottom: 1rem; margin-bottom: 2rem; }
-.diploma-body p {
-    margin: 0 0 1rem 0;
+.diploma-container::before {
+    content: '';
+    position: absolute;
+    top: 5px; left: 5px; right: 5px; bottom: 5px;
+    border: 2px solid var(--diploma-color);
 }
+.diploma-header h2 { font-size: 2rem; }
+.diploma-body p { font-size: 1.1rem; }
 .recipient-name {
     font-family: var(--font-header);
     font-size: 2.5rem;
-    color: var(--text-primary);
     margin: 1rem 0;
 }
 .diploma-footer {
-    border-top: 2px solid var(--diploma-color);
-    padding-top: 1rem;
-    margin-top: 2rem;
     display: flex;
     justify-content: space-between;
-    font-style: italic;
+    margin-top: 3rem;
+    border-top: 1px solid var(--border-color);
+    padding-top: 1rem;
     font-size: 0.9rem;
 }
 .diploma-actions {
-    margin-top: 2rem;
     display: flex;
     justify-content: center;
     gap: 1rem;
+    margin-top: 2rem;
 }
+
 @media print {
     body, #root, .app-container {
         background: none !important;
     }
     .app-header, .app-footer, .diploma-actions {
-        display: none !important;
+        display: none;
     }
     main.main-content {
         padding: 0;
         max-width: 100%;
     }
     .diploma-wrapper {
-        box-shadow: none;
-        border: none;
         padding: 0;
     }
-}
-
-/* À propos page */
-.faka-uvea-info-page .info-section {
-    background-color: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    padding: 2rem;
-    margin-bottom: 2rem;
-}
-.faka-uvea-info-page .info-section h2 {
-    font-family: var(--font-header);
-    font-size: 1.8rem;
-    color: var(--accent-primary);
-    margin-top: 0;
-    margin-bottom: 1rem;
-}
-.alphabet-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
-    gap: 1rem;
-    margin-top: 1.5rem;
-}
-.alphabet-letter {
-    background-color: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    height: 60px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem;
-    font-weight: bold;
-}
-.pronunciation-guide dt {
-    font-weight: bold;
-    color: var(--text-primary);
-    margin-top: 1rem;
-}
-.pronunciation-guide dd {
-    margin-left: 1.5rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
 }
